@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -35,7 +36,7 @@ func (col *column) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v", col.idx, col.name, col.tp)
+	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v\n", col.idx, col.name, col.tp)
 }
 
 func (col *column) parseColumn(cd *ast.ColumnDef) {
@@ -60,6 +61,7 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 type table struct {
 	name        string
 	columns     []*column
+	columnList  string
 	indices     map[string]*column
 	uniqIndices map[string]*column
 }
@@ -81,16 +83,17 @@ func (t *table) String() string {
 	ret := fmt.Sprintf("[table]name: %s\n", t.name)
 	ret += fmt.Sprintf("[table]columns:\n")
 	ret += t.printColumns()
-	ret += "\n"
+
+	ret += fmt.Sprintf("[table]column list: %s\n", t.columnList)
 
 	ret += fmt.Sprintf("[table]indices:\n")
 	for k, v := range t.indices {
-		ret += fmt.Sprintf("key->%s, value->%v\n", k, v)
+		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
 	ret += fmt.Sprintf("[table]uniq indices:\n")
 	for k, v := range t.uniqIndices {
-		ret += fmt.Sprintf("key->%s, value->%v\n", k, v)
+		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
 	return ret
@@ -129,9 +132,20 @@ func (t *table) parseTableConstraint(cons *ast.Constraint) {
 
 }
 
+func (t *table) buildColumnList() {
+	columns := make([]string, 0, len(t.columns))
+	for _, column := range t.columns {
+		columns = append(columns, column.name)
+	}
+
+	t.columnList = strings.Join(columns, ",")
+	t.columnList = t.columnList[:len(t.columnList)]
+}
+
 func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.name = stmt.Table.Name.L
 	t.columns = make([]*column, 0, len(stmt.Cols))
+
 	for i, col := range stmt.Cols {
 		column := &column{idx: i + 1, table: t}
 		column.parseColumn(col)
@@ -141,16 +155,17 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 		t.parseTableConstraint(cons)
 	}
 
+	t.buildColumnList()
+
 	return nil
 }
 
-func parseTableSQL(sql string) (*table, error) {
+func parseTableSQL(table *table, sql string) error {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	table := newTable()
 	switch node := stmt.(type) {
 	case *ast.CreateTableStmt:
 		err = parseTable(table, node)
@@ -158,27 +173,27 @@ func parseTableSQL(sql string) (*table, error) {
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}
 
-	return table, errors.Trace(err)
+	return errors.Trace(err)
 }
 
-func parseIndex(t *table, stmt *ast.CreateIndexStmt) error {
-	if t.name != stmt.Table.Name.L {
-		return errors.Errorf("mismatch table name for create index - %s : %s", t.name, stmt.Table.Name.L)
+func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
+	if table.name != stmt.Table.Name.L {
+		return errors.Errorf("mismatch table name for create index - %s : %s", table.name, stmt.Table.Name.L)
 	}
 
 	for _, indexCol := range stmt.IndexColNames {
 		name := indexCol.Column.Name.L
 		if stmt.Unique {
-			t.uniqIndices[name] = t.findCol(t.columns, name)
+			table.uniqIndices[name] = table.findCol(table.columns, name)
 		} else {
-			t.indices[name] = t.findCol(t.columns, name)
+			table.indices[name] = table.findCol(table.columns, name)
 		}
 	}
 
 	return nil
 }
 
-func parseIndexSQL(sql string, t *table) error {
+func parseIndexSQL(table *table, sql string) error {
 	if len(sql) == 0 {
 		return nil
 	}
@@ -190,7 +205,7 @@ func parseIndexSQL(sql string, t *table) error {
 
 	switch node := stmt.(type) {
 	case *ast.CreateIndexStmt:
-		err = parseIndex(t, node)
+		err = parseIndex(table, node)
 	default:
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}

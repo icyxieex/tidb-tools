@@ -34,15 +34,17 @@ func main() {
 		os.Exit(2)
 	}
 
-	table, err := parseTableSQL(cfg.TableSQL)
+	table := newTable()
+	err = parseTableSQL(table, cfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = parseIndexSQL(cfg.IndexSQL, table)
+	err = parseIndexSQL(table, cfg.IndexSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Printf("%s\n", table)
+	doProcess(table, cfg.JobCount, cfg.WorkerCount)
 }

@@ -22,6 +22,23 @@ import (
 	"github.com/ngaut/log"
 )
 
+func genRowData(table *table) string {
+	var values []byte
+	for _, column := range table.columns {
+		values = append(values, []byte(genColumnData(table, column))...)
+		values = append(values, ',')
+	}
+
+	values = values[:len(values)-1]
+	sql := fmt.Sprintf("insert into %s (%s) values (%s);", table.name, table.columnList, string(values))
+	return sql
+}
+
+func genColumnData(table *table, column *column) string {
+	// TODO: finish it.
+	return "1"
+}
+
 func createDB(cfg DBConfig) (*sql.DB, error) {
 	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 	db, err := sql.Open("mysql", dbDSN)

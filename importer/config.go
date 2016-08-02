@@ -32,13 +32,16 @@ func NewConfig() *Config {
 	fs.StringVar(&cfg.TableSQL, "t", "", "create table sql")
 	fs.StringVar(&cfg.IndexSQL, "i", "", "create index sql")
 
-	flag.StringVar(&cfg.DBCfg.Host, "h", "127.0.0.1", "set the database host ip")
-	flag.StringVar(&cfg.DBCfg.User, "u", "root", "set the database user")
-	flag.StringVar(&cfg.DBCfg.Password, "p", "", "set the database password")
-	flag.StringVar(&cfg.DBCfg.Name, "D", "test", "set the database name")
-	flag.IntVar(&cfg.DBCfg.Port, "P", 3306, "set the database host port")
-	flag.IntVar(&cfg.DBCfg.MaxIdleConns, "max-idle-conns", 5, "set maximum number of connections")
-	flag.IntVar(&cfg.DBCfg.MaxOpenConns, "max-open-conns", 5, "set the maximum number of open connections ")
+	fs.IntVar(&cfg.WorkerCount, "c", 1, "parallel worker count")
+	fs.IntVar(&cfg.JobCount, "n", 1, "total job count")
+
+	fs.StringVar(&cfg.DBCfg.Host, "h", "127.0.0.1", "set the database host ip")
+	fs.StringVar(&cfg.DBCfg.User, "u", "root", "set the database user")
+	fs.StringVar(&cfg.DBCfg.Password, "p", "", "set the database password")
+	fs.StringVar(&cfg.DBCfg.Name, "D", "test", "set the database name")
+	fs.IntVar(&cfg.DBCfg.Port, "P", 3306, "set the database host port")
+	fs.IntVar(&cfg.DBCfg.MaxIdleConns, "max-idle-conns", 5, "set maximum number of connections")
+	fs.IntVar(&cfg.DBCfg.MaxOpenConns, "max-open-conns", 5, "set the maximum number of open connections ")
 
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
@@ -78,6 +81,10 @@ type Config struct {
 	IndexSQL string `toml:"index-sql" json:"index-sql"`
 
 	LogLevel string `toml:"log-level" json:"log-level"`
+
+	WorkerCount int `toml:"worker-count" json:"worker-count"`
+
+	JobCount int `toml:"job-count" json:"job-count"`
 
 	DBCfg DBConfig `toml:"db" json:"db"`
 
