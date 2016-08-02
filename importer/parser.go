@@ -26,6 +26,7 @@ import (
 type column struct {
 	idx  int
 	name string
+	data datum
 	tp   *types.FieldType
 
 	table *table
@@ -59,11 +60,12 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 }
 
 type table struct {
-	name        string
-	columns     []*column
-	columnList  string
-	indices     map[string]*column
-	uniqIndices map[string]*column
+	name         string
+	columns      []*column
+	columnList   string
+	indices      map[string]*column
+	uniqIndices  map[string]*column
+	unsignedCols map[string]*column
 }
 
 func (t *table) printColumns() string {
@@ -91,7 +93,7 @@ func (t *table) String() string {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
-	ret += fmt.Sprintf("[table]uniq indices:\n")
+	ret += fmt.Sprintf("[table]unique indices:\n")
 	for k, v := range t.uniqIndices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
@@ -101,8 +103,9 @@ func (t *table) String() string {
 
 func newTable() *table {
 	return &table{
-		indices:     make(map[string]*column),
-		uniqIndices: make(map[string]*column),
+		indices:      make(map[string]*column),
+		uniqIndices:  make(map[string]*column),
+		unsignedCols: make(map[string]*column),
 	}
 }
 
@@ -129,7 +132,6 @@ func (t *table) parseTableConstraint(cons *ast.Constraint) {
 			t.indices[name] = t.findCol(t.columns, name)
 		}
 	}
-
 }
 
 func (t *table) buildColumnList() {
@@ -139,7 +141,6 @@ func (t *table) buildColumnList() {
 	}
 
 	t.columnList = strings.Join(columns, ",")
-	t.columnList = t.columnList[:len(t.columnList)]
 }
 
 func parseTable(t *table, stmt *ast.CreateTableStmt) error {

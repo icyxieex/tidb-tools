@@ -29,86 +29,55 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func randInt() int {
-	return rand.Int()
+func randInt(min int, max int) int {
+	return min + rand.Intn(max-min+1)
 }
 
-func randIntn(n int) int {
-	return rand.Intn(n)
+func randInt64(min int64, max int64) int64 {
+	return min + rand.Int63n(max-min+1)
 }
 
-func randFloat() float64 {
-	return rand.Float64()
+func randFloat64(min int64, max int64, prec int) float64 {
+	value := float64(randInt64(min, max))
+	fvalue := strconv.FormatFloat(value, 'f', prec, 64)
+	value, _ = strconv.ParseFloat(fvalue, 64)
+	return value
+}
+
+func randBool() bool {
+	value := randInt(0, 1)
+	return value == 1
 }
 
 func randString(n int) string {
 	var bytes = make([]byte, n)
 	for i, _ := range bytes {
-		bytes[i] = alpha[randIntn(len(alpha))]
+		bytes[i] = alpha[randInt(0, len(alpha)-1)]
 	}
 	return string(bytes)
 }
 
-// 0 -> min
-// 1 -> max
-// randNum(1,10) -> [1,10)
-// randNum(-1) -> random
-// randNum() -> random
-func randNum(args ...int) int {
-	if len(args) > 1 {
-		return args[0] + randIntn(args[1]-args[0])
-	} else if len(args) == 1 {
-		return randIntn(args[0])
-	} else {
-		return randInt()
-	}
-}
-
-// 0 -> min
-// 1 -> max
-// 2 -> prec
-// randFloat64(1,10) -> [1.0,10.0]
-// randFloat64(1,10,3) -> [1.000,10.000]
-// randFloat64(-1) -> random
-// randFloat64() -> random
-func randFloat64(args ...int) float64 {
-	value := float64(randNum(args...))
-
-	if len(args) > 2 {
-		fvalue := strconv.FormatFloat(value, 'f', args[2], 64)
-		value, _ = strconv.ParseFloat(fvalue, 64)
-	}
-
-	return value
-}
-
-// true/false
-func randBool() bool {
-	value := randIntn(2)
-	return value == 1
-}
-
 func randDate() string {
 	year := time.Now().Year()
-	month := randNum(1, 13)
-	day := randNum(1, 30)
+	month := randInt(1, 12)
+	day := randInt(1, 28)
 	date := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 	return date
 }
 
 func randDuration(n time.Duration) time.Duration {
-	duration := randIntn(int(n))
+	duration := randInt(0, int(n))
 	return time.Duration(duration)
 }
 
 func randTimestamp() string {
 	now := time.Now()
-	year := now.Year() - randIntn(3)
-	month := randNum(1, 13)
-	day := randNum(1, 30)
-	hour := randNum(0, 25)
-	min := randNum(0, 61)
-	sec := randNum(0, 61)
+	year := now.Year() - randInt(0, 3)
+	month := randInt(1, 12)
+	day := randInt(1, 28)
+	hour := randInt(0, 24)
+	min := randInt(0, 60)
+	sec := randInt(0, 60)
 
 	randTime := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.UTC)
 	return randTime.Format(format_time)

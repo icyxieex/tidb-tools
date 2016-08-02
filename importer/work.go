@@ -16,6 +16,9 @@ package main
 import (
 	"fmt"
 	"time"
+
+	"github.com/juju/errors"
+	"github.com/ngaut/log"
 )
 
 func addJobs(jobCount int, jobChan chan struct{}) {
@@ -28,7 +31,11 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 
 func doJob(table *table, jobChan chan struct{}, doneChan chan struct{}) {
 	for _ = range jobChan {
-		sql := genRowData(table)
+		sql, err := genRowData(table)
+		if err != nil {
+			log.Fatalf(errors.ErrorStack(err))
+		}
+
 		fmt.Println(sql)
 	}
 
