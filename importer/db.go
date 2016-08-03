@@ -162,6 +162,19 @@ func genColumnData(table *table, column *column) (string, error) {
 	}
 }
 
+func execSQL(db *sql.DB, sql string) error {
+	if len(sql) == 0 {
+		return nil
+	}
+
+	_, err := db.Exec(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 func createDB(cfg DBConfig) (*sql.DB, error) {
 	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 	db, err := sql.Open("mysql", dbDSN)

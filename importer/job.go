@@ -14,6 +14,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -29,14 +30,17 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 	close(jobChan)
 }
 
-func doJob(table *table, jobChan chan struct{}, doneChan chan struct{}) {
+func doJob(table *table, db *sql.DB, jobChan chan struct{}, doneChan chan struct{}) {
 	for _ = range jobChan {
 		sql, err := genRowData(table)
 		if err != nil {
 			log.Fatalf(errors.ErrorStack(err))
 		}
 
-		fmt.Println(sql)
+		_, err = db.Exec(sql)
+		if err != nil {
+			log.Fatalf(errors.ErrorStack(err))
+		}
 	}
 
 	doneChan <- struct{}{}
@@ -60,7 +64,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 	fmt.Printf("[importer]total %d cases, cost %d seconds, tps %d, start %s, now %s\n", jobCount, seconds, tps, start, now)
 }
 
-func doProcess(table *table, jobCount int, workerCount int) {
+func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int) {
 	jobChan := make(chan struct{}, workerCount)
 	doneChan := make(chan struct{}, workerCount)
 
@@ -68,7 +72,7 @@ func doProcess(table *table, jobCount int, workerCount int) {
 	go addJobs(jobCount, jobChan)
 
 	for i := 0; i < workerCount; i++ {
-		go doJob(table, jobChan, doneChan)
+		go doJob(table, dbs[i], jobChan, doneChan)
 	}
 
 	doWait(doneChan, start, jobCount, workerCount)

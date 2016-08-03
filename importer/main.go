@@ -15,7 +15,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
 	"github.com/juju/errors"
@@ -45,6 +44,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("%s\n", table)
-	doProcess(table, cfg.JobCount, cfg.WorkerCount)
+	dbs, err := createDBs(cfg.DBCfg, cfg.WorkerCount)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closeDBs(dbs)
+
+	err = execSQL(dbs[0], cfg.TableSQL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = execSQL(dbs[0], cfg.IndexSQL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	doProcess(table, dbs, cfg.JobCount, cfg.WorkerCount)
 }
