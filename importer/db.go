@@ -18,50 +18,12 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync/atomic"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 )
-
-type datum struct {
-	intValue   int64
-	uintValue  uint64
-	floatValue float64
-}
-
-// const (
-// 	TypeDecimal byte = iota
-// 	TypeTiny
-// 	TypeShort
-// 	TypeLong
-// 	TypeFloat
-// 	TypeDouble
-// 	TypeNull
-// 	TypeTimestamp
-// 	TypeLonglong
-// 	TypeInt24
-// 	TypeDate
-// 	TypeDuration /* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
-// 	TypeDatetime
-// 	TypeYear
-// 	TypeNewDate
-// 	TypeVarchar
-// 	TypeBit
-// )
-
-// TypeNewDecimal byte = iota + 0xf6
-// 	TypeEnum
-// 	TypeSet
-// 	TypeTinyBlob
-// 	TypeMediumBlob
-// 	TypeLongBlob
-// 	TypeBlob
-// 	TypeVarString
-// 	TypeString
-// 	TypeGeometry
 
 func genRowData(table *table) (string, error) {
 	var values []byte
@@ -82,13 +44,13 @@ func genRowData(table *table) (string, error) {
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	_, isUnique := table.uniqIndices[column.name]
-	_, isUnsigned := table.unsignedCols[column.name]
+	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
 
 	switch tp.Tp {
 	case mysql.TypeTiny:
 		var data int64
 		if isUnique {
-			data = atomic.AddInt64(&column.data.intValue, 1)
+			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
 				data = randInt64(0, math.MaxUint8)
@@ -100,7 +62,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeShort:
 		var data int64
 		if isUnique {
-			data = atomic.AddInt64(&column.data.intValue, 1)
+			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
 				data = randInt64(0, math.MaxUint16)
@@ -112,7 +74,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLong:
 		var data int64
 		if isUnique {
-			data = atomic.AddInt64(&column.data.intValue, 1)
+			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
 				data = randInt64(0, math.MaxUint32)
@@ -124,7 +86,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLonglong:
 		var data int64
 		if isUnique {
-			data = atomic.AddInt64(&column.data.intValue, 1)
+			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
 				data = randInt64(0, math.MaxInt64)
@@ -133,13 +95,64 @@ func genColumnData(table *table, column *column) (string, error) {
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
-	case mysql.TypeVarchar:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
-		n := randInt(1, tp.Flen)
 		if isUnique {
-			data = append(data, []byte(fmt.Sprintf("%s", atomic.AddInt64(&column.data.intValue, 1)))...)
+			data = append(data, []byte(column.data.uniqString(tp.Flen))...)
 		} else {
-			data = append(data, []byte(randString(n))...)
+			data = append(data, []byte(randString(randInt(1, tp.Flen)))...)
+		}
+
+		data = append(data, '\'')
+		return string(data), nil
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+		var data float64
+		if isUnique {
+			data = column.data.uniqFloat64()
+		} else {
+			if isUnsigned {
+				data = float64(randInt64(0, math.MaxInt64))
+			} else {
+				data = float64(randInt64(math.MinInt64, math.MaxInt64))
+			}
+		}
+		return strconv.FormatFloat(data, 'f', -1, 64), nil
+	case mysql.TypeDate:
+		data := []byte{'\''}
+		if isUnique {
+			data = append(data, []byte(column.data.uniqDate())...)
+		} else {
+			data = append(data, []byte(randDate())...)
+		}
+
+		data = append(data, '\'')
+		return string(data), nil
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		data := []byte{'\''}
+		if isUnique {
+			data = append(data, []byte(column.data.uniqTimestamp())...)
+		} else {
+			data = append(data, []byte(randTimestamp())...)
+		}
+
+		data = append(data, '\'')
+		return string(data), nil
+	case mysql.TypeDuration:
+		data := []byte{'\''}
+		if isUnique {
+			data = append(data, []byte(column.data.uniqTime())...)
+		} else {
+			data = append(data, []byte(randTime())...)
+		}
+
+		data = append(data, '\'')
+		return string(data), nil
+	case mysql.TypeYear:
+		data := []byte{'\''}
+		if isUnique {
+			data = append(data, []byte(column.data.uniqYear())...)
+		} else {
+			data = append(data, []byte(randYear())...)
 		}
 
 		data = append(data, '\'')

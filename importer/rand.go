@@ -21,8 +21,7 @@ import (
 )
 
 const (
-	alpha       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	format_time = "2006-01-02 15:04:05"
+	alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
 func init() {
@@ -50,9 +49,9 @@ func randBool() bool {
 }
 
 func randString(n int) string {
-	var bytes = make([]byte, n)
+	bytes := make([]byte, n)
 	for i, _ := range bytes {
-		bytes[i] = alpha[randInt(0, len(alpha)-1)]
+		bytes[i] = alphabet[randInt(0, len(alphabet)-1)]
 	}
 	return string(bytes)
 }
@@ -61,8 +60,7 @@ func randDate() string {
 	year := time.Now().Year()
 	month := randInt(1, 12)
 	day := randInt(1, 28)
-	date := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
-	return date
+	return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 }
 
 func randDuration(n time.Duration) time.Duration {
@@ -70,15 +68,24 @@ func randDuration(n time.Duration) time.Duration {
 	return time.Duration(duration)
 }
 
+func randTime() string {
+	hour := randInt(0, 23)
+	min := randInt(0, 59)
+	sec := randInt(0, 59)
+	return fmt.Sprintf("%02d:%02d:%02d", hour, min, sec)
+}
+
 func randTimestamp() string {
 	now := time.Now()
 	year := now.Year() - randInt(0, 3)
 	month := randInt(1, 12)
 	day := randInt(1, 28)
-	hour := randInt(0, 24)
-	min := randInt(0, 60)
-	sec := randInt(0, 60)
+	hour := randInt(0, 23)
+	min := randInt(0, 59)
+	sec := randInt(0, 59)
+	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, min, sec)
+}
 
-	randTime := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.UTC)
-	return randTime.Format(format_time)
+func randYear() string {
+	return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 3))
 }

@@ -26,7 +26,7 @@ import (
 type column struct {
 	idx  int
 	name string
-	data datum
+	data *datum
 	tp   *types.FieldType
 
 	table *table
@@ -148,7 +148,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
 	for i, col := range stmt.Cols {
-		column := &column{idx: i + 1, table: t}
+		column := &column{idx: i + 1, table: t, data: newDatum()}
 		column.parseColumn(col)
 	}
 
