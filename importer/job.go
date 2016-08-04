@@ -65,7 +65,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 }
 
 func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int) {
-	jobChan := make(chan struct{}, workerCount)
+	jobChan := make(chan struct{}, 16*workerCount)
 	doneChan := make(chan struct{}, workerCount)
 
 	start := time.Now()
