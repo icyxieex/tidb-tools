@@ -34,14 +34,15 @@ func NewConfig() *Config {
 
 	fs.IntVar(&cfg.WorkerCount, "c", 1, "parallel worker count")
 	fs.IntVar(&cfg.JobCount, "n", 1, "total job count")
+	fs.IntVar(&cfg.Batch, "b", 1, "insert batch commit count")
 
 	fs.StringVar(&cfg.DBCfg.Host, "h", "127.0.0.1", "set the database host ip")
 	fs.StringVar(&cfg.DBCfg.User, "u", "root", "set the database user")
 	fs.StringVar(&cfg.DBCfg.Password, "p", "", "set the database password")
 	fs.StringVar(&cfg.DBCfg.Name, "D", "test", "set the database name")
 	fs.IntVar(&cfg.DBCfg.Port, "P", 3306, "set the database host port")
-	fs.IntVar(&cfg.DBCfg.MaxIdleConns, "max-idle-conns", 5, "set maximum number of connections")
-	fs.IntVar(&cfg.DBCfg.MaxOpenConns, "max-open-conns", 5, "set the maximum number of open connections ")
+	fs.IntVar(&cfg.DBCfg.MaxIdleConns, "max-idle-conns", 100, "set maximum number of connections")
+	fs.IntVar(&cfg.DBCfg.MaxOpenConns, "max-open-conns", 100, "set the maximum number of open connections ")
 
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
@@ -85,6 +86,8 @@ type Config struct {
 	WorkerCount int `toml:"worker-count" json:"worker-count"`
 
 	JobCount int `toml:"job-count" json:"job-count"`
+
+	Batch int `toml:"batch" json:"batch"`
 
 	DBCfg DBConfig `toml:"db" json:"db"`
 

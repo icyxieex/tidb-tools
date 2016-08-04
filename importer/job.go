@@ -30,17 +30,43 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 	close(jobChan)
 }
 
-func doJob(table *table, db *sql.DB, jobChan chan struct{}, doneChan chan struct{}) {
-	for _ = range jobChan {
-		sql, err := genRowData(table)
-		if err != nil {
-			log.Fatalf(errors.ErrorStack(err))
-		}
+func doInsert(table *table, db *sql.DB, count int) {
+	sqls, err := genRowDatas(table, count)
+	if err != nil {
+		log.Fatalf(errors.ErrorStack(err))
+	}
 
+	txn, err := db.Begin()
+	if err != nil {
+		log.Fatalf(errors.ErrorStack(err))
+	}
+
+	for _, sql := range sqls {
 		_, err = db.Exec(sql)
 		if err != nil {
 			log.Fatalf(errors.ErrorStack(err))
 		}
+	}
+
+	err = txn.Commit()
+	if err != nil {
+		log.Fatalf(errors.ErrorStack(err))
+	}
+}
+
+func doJob(table *table, db *sql.DB, batch int, jobChan chan struct{}, doneChan chan struct{}) {
+	count := 0
+	for _ = range jobChan {
+		count++
+		if count == batch {
+			doInsert(table, db, count)
+			count = 0
+		}
+	}
+
+	if count > 0 {
+		doInsert(table, db, count)
+		count = 0
 	}
 
 	doneChan <- struct{}{}
@@ -64,7 +90,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 	fmt.Printf("[importer]total %d cases, cost %d seconds, tps %d, start %s, now %s\n", jobCount, seconds, tps, start, now)
 }
 
-func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int) {
+func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int, batch int) {
 	jobChan := make(chan struct{}, 16*workerCount)
 	doneChan := make(chan struct{}, workerCount)
 
@@ -72,7 +98,7 @@ func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int) {
 	go addJobs(jobCount, jobChan)
 
 	for i := 0; i < workerCount; i++ {
-		go doJob(table, dbs[i], jobChan, doneChan)
+		go doJob(table, dbs[i], batch, jobChan, doneChan)
 	}
 
 	doWait(doneChan, start, jobCount, workerCount)

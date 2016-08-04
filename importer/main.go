@@ -60,5 +60,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	doProcess(table, dbs, cfg.JobCount, cfg.WorkerCount)
+	doProcess(table, dbs, cfg.JobCount, cfg.WorkerCount, cfg.Batch)
 }

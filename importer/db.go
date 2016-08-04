@@ -25,6 +25,19 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
+func genRowDatas(table *table, count int) ([]string, error) {
+	datas := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		data, err := genRowData(table)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		datas = append(datas, data)
+	}
+
+	return datas, nil
+}
+
 func genRowData(table *table) (string, error) {
 	var values []byte
 	for _, column := range table.columns {
