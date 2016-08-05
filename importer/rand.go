@@ -21,7 +21,10 @@ import (
 )
 
 const (
-	alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	dateFormat     = "2006-01-02"
+	timeFormat     = "15:04:05"
+	dateTimeFormat = "2006-01-02 15:04:05"
 )
 
 func init() {
@@ -56,23 +59,44 @@ func randString(n int) string {
 	return string(bytes)
 }
 
-func randDate() string {
-	year := time.Now().Year()
-	month := randInt(1, 12)
-	day := randInt(1, 28)
-	return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
-}
-
 func randDuration(n time.Duration) time.Duration {
 	duration := randInt(0, int(n))
 	return time.Duration(duration)
 }
 
-func randTime() string {
-	hour := randInt(0, 23)
-	min := randInt(0, 59)
-	sec := randInt(0, 59)
-	return fmt.Sprintf("%02d:%02d:%02d", hour, min, sec)
+func randDate(min string, max string) string {
+	if len(min) == 0 {
+		year := time.Now().Year()
+		month := randInt(1, 12)
+		day := randInt(1, 28)
+		return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+	}
+
+	minTime, _ := time.Parse(dateFormat, min)
+	if len(max) == 0 {
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+		return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
+	}
+
+	maxTime, _ := time.Parse(dateFormat, max)
+	days := int(maxTime.Sub(minTime).Hours() / 24)
+	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour)
+	return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
+}
+
+func randTime(min string, max string) string {
+	if len(min) == 0 || len(max) == 0 {
+		hour := randInt(0, 23)
+		min := randInt(0, 59)
+		sec := randInt(0, 59)
+		return fmt.Sprintf("%02d:%02d:%02d", hour, min, sec)
+	}
+
+	minTime, _ := time.Parse(timeFormat, min)
+	maxTime, _ := time.Parse(timeFormat, max)
+	seconds := int(maxTime.Sub(minTime).Seconds())
+	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
+	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
 }
 
 func randTimestamp() string {

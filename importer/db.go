@@ -25,6 +25,34 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
+func intRangeValue(column *column, min int64, max int64) (int64, int64) {
+	var err error
+	if len(column.min) > 0 {
+		min, err = strconv.ParseInt(column.min, 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if len(column.max) > 0 {
+			max, err = strconv.ParseInt(column.max, 10, 64)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+
+	return min, max
+}
+
+func randInt64Value(column *column, min int64, max int64) int64 {
+	min, max = intRangeValue(column, min, max)
+	return randInt64(min, max)
+}
+
+// func randDateValue(column *column) int64 {
+
+// }
+
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -66,9 +94,9 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
-				data = randInt64(0, math.MaxUint8)
+				data = randInt64Value(column, 0, math.MaxUint8)
 			} else {
-				data = randInt64(math.MinInt8, math.MaxInt8)
+				data = randInt64Value(column, math.MinInt8, math.MaxInt8)
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
@@ -78,9 +106,9 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
-				data = randInt64(0, math.MaxUint16)
+				data = randInt64Value(column, 0, math.MaxUint16)
 			} else {
-				data = randInt64(math.MinInt16, math.MaxInt16)
+				data = randInt64Value(column, math.MinInt16, math.MaxInt16)
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
@@ -90,9 +118,9 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
-				data = randInt64(0, math.MaxUint32)
+				data = randInt64Value(column, 0, math.MaxUint32)
 			} else {
-				data = randInt64(math.MinInt32, math.MaxInt32)
+				data = randInt64Value(column, math.MinInt32, math.MaxInt32)
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
@@ -102,9 +130,9 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = column.data.uniqInt64()
 		} else {
 			if isUnsigned {
-				data = randInt64(0, math.MaxInt64)
+				data = randInt64Value(column, 0, math.MaxInt64)
 			} else {
-				data = randInt64(math.MinInt64, math.MaxInt64)
+				data = randInt64Value(column, math.MinInt64, math.MaxInt64)
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
@@ -124,9 +152,9 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = column.data.uniqFloat64()
 		} else {
 			if isUnsigned {
-				data = float64(randInt64(0, math.MaxInt64))
+				data = float64(randInt64Value(column, 0, math.MaxInt64))
 			} else {
-				data = float64(randInt64(math.MinInt64, math.MaxInt64))
+				data = float64(randInt64Value(column, math.MinInt64, math.MaxInt64))
 			}
 		}
 		return strconv.FormatFloat(data, 'f', -1, 64), nil
@@ -135,7 +163,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqDate())...)
 		} else {
-			data = append(data, []byte(randDate())...)
+			data = append(data, []byte(randDate(column.min, column.max))...)
 		}
 
 		data = append(data, '\'')
@@ -155,7 +183,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqTime())...)
 		} else {
-			data = append(data, []byte(randTime())...)
+			data = append(data, []byte(randTime(column.min, column.max))...)
 		}
 
 		data = append(data, '\'')

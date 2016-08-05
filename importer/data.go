@@ -20,24 +20,27 @@ import (
 	"time"
 )
 
+var defaultStep int64 = 1
+
 type datum struct {
 	sync.Mutex
 
 	intValue  int64
 	timeValue time.Time
+	step      int64
 }
 
-func newDatum() *datum {
-	return &datum{intValue: -1}
+func newDatum(step int64) *datum {
+	return &datum{intValue: -1, step: step}
 }
 
 func (d *datum) uniqInt64() int64 {
-	data := atomic.AddInt64(&d.intValue, 1)
+	data := atomic.AddInt64(&d.intValue, d.step)
 	return data
 }
 
 func (d *datum) uniqFloat64() float64 {
-	data := atomic.AddInt64(&d.intValue, 1)
+	data := atomic.AddInt64(&d.intValue, d.step)
 	return float64(data)
 }
 
@@ -74,7 +77,7 @@ func (d *datum) uniqTime() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	} else {
-		d.timeValue = d.timeValue.Add(time.Second)
+		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
 
 	return fmt.Sprintf("%02d:%02d:%02d", d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
@@ -87,7 +90,7 @@ func (d *datum) uniqDate() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	} else {
-		d.timeValue = d.timeValue.AddDate(0, 0, 1)
+		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 	}
 
 	return fmt.Sprintf("%04d-%02d-%02d", d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day())
@@ -100,7 +103,7 @@ func (d *datum) uniqTimestamp() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	} else {
-		d.timeValue = d.timeValue.Add(time.Second)
+		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
 
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
@@ -115,7 +118,7 @@ func (d *datum) uniqYear() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	} else {
-		d.timeValue = d.timeValue.AddDate(1, 0, 0)
+		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 	}
 
 	return fmt.Sprintf("%04d", d.timeValue.Year())

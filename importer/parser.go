@@ -15,19 +15,25 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/types"
 )
 
 type column struct {
-	idx  int
-	name string
-	data *datum
-	tp   *types.FieldType
+	idx     int
+	name    string
+	data    *datum
+	tp      *types.FieldType
+	comment string
+	min     string
+	max     string
+	step    int64
 
 	table *table
 }
@@ -37,13 +43,61 @@ func (col *column) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v\n", col.idx, col.name, col.tp)
+	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v, min: %s, max: %s, step: %d\n",
+		col.idx, col.name, col.tp, col.min, col.max, col.step)
+}
+
+func (col *column) parseRule(kvs []string) {
+	if len(kvs) != 2 {
+		return
+	}
+
+	key := strings.TrimSpace(kvs[0])
+	value := strings.TrimSpace(kvs[1])
+	if key == "range" {
+		fields := strings.Split(value, ",")
+		if len(fields) == 1 {
+			col.min = strings.TrimSpace(fields[0])
+		} else if len(fields) == 2 {
+			col.min = strings.TrimSpace(fields[0])
+			col.max = strings.TrimSpace(fields[1])
+		}
+	} else if key == "step" {
+		var err error
+		col.step, err = strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+// parse the data rules.
+// rules like `a int unique comment '[[range=1,10;step=1]]'`,
+// then we will get value from 1,2...10
+func (col *column) parseColumnComment() {
+	comment := strings.TrimSpace(col.comment)
+	start := strings.Index(comment, "[[")
+	end := strings.Index(comment, "]]")
+	var content string
+	if start < end {
+		content = comment[start+2 : end]
+	}
+
+	fields := strings.Split(content, ";")
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		kvs := strings.Split(field, "=")
+		col.parseRule(kvs)
+	}
+
+	col.data = newDatum(col.step)
 }
 
 func (col *column) parseColumn(cd *ast.ColumnDef) {
 	col.name = cd.Name.Name.L
 	col.tp = cd.Tp
 	col.parseColumnOptions(cd.Options)
+	col.parseColumnComment()
 	col.table.columns = append(col.table.columns, col)
 }
 
@@ -55,6 +109,8 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 			col.table.uniqIndices[col.name] = col
 		case ast.ColumnOptionIndex:
 			col.table.indices[col.name] = col
+		case ast.ColumnOptionComment:
+			col.comment = op.Expr.GetDatum().GetString()
 		}
 	}
 }
@@ -148,7 +204,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
 	for i, col := range stmt.Cols {
-		column := &column{idx: i + 1, table: t, data: newDatum()}
+		column := &column{idx: i + 1, table: t, step: defaultStep}
 		column.parseColumn(col)
 	}
 
