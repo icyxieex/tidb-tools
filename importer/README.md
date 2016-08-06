@@ -45,13 +45,13 @@ Usage of importer:
 ./importer -t "create table t(a int primary key, b double, c varchar(10), d date unique, e time unique, f timestamp unique, g date unique, h datetime unique, i year unique);" -i "create unique index u_b on t(b);" -c 1 -n 10 -P 4000
 ```
 
-Also，we have some interesting features, like:
+Moreover, we have some interesting features, like:
 
-- range
+### range
 ```
 ./importer -t "create table t(a int comment '[[range=1,10]]');" -P 4000 -c 1 -n 10
 ```
-Then the table value will be like this
+Then the table rows will be like this:
 ```
 mysql> select * from t;
 +------+
