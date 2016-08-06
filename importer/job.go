@@ -56,7 +56,7 @@ func doInsert(table *table, db *sql.DB, count int) {
 
 func doJob(table *table, db *sql.DB, batch int, jobChan chan struct{}, doneChan chan struct{}) {
 	count := 0
-	for _ = range jobChan {
+	for range jobChan {
 		count++
 		if count == batch {
 			doInsert(table, db, count)

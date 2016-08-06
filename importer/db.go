@@ -128,7 +128,7 @@ func genColumnData(table *table, column *column) (string, error) {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxInt64)
 			} else {
-				data = randInt64Value(column, math.MinInt64, math.MaxInt64)
+				data = randInt64Value(column, math.MinInt32, math.MaxInt32)
 			}
 		}
 		return strconv.FormatInt(data, 10), nil
@@ -150,7 +150,7 @@ func genColumnData(table *table, column *column) (string, error) {
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64))
 			} else {
-				data = float64(randInt64Value(column, math.MinInt64, math.MaxInt64))
+				data = float64(randInt64Value(column, math.MinInt32, math.MaxInt32))
 			}
 		}
 		return strconv.FormatFloat(data, 'f', -1, 64), nil
