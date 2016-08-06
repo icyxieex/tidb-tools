@@ -29,10 +29,6 @@ Usage of importer:
     	set the database host ip (default "127.0.0.1")
   -i string
     	create index sql
-  -max-idle-conns int
-    	set maximum number of connections (default 100)
-  -max-open-conns int
-    	set the maximum number of open connections  (default 100)
   -n int
     	total job count (default 1)
   -p string

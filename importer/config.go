@@ -41,8 +41,6 @@ func NewConfig() *Config {
 	fs.StringVar(&cfg.DBCfg.Password, "p", "", "set the database password")
 	fs.StringVar(&cfg.DBCfg.Name, "D", "test", "set the database name")
 	fs.IntVar(&cfg.DBCfg.Port, "P", 3306, "set the database host port")
-	fs.IntVar(&cfg.DBCfg.MaxIdleConns, "max-idle-conns", 100, "set maximum number of connections")
-	fs.IntVar(&cfg.DBCfg.MaxOpenConns, "max-open-conns", 100, "set the maximum number of open connections ")
 
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
@@ -60,10 +58,6 @@ type DBConfig struct {
 	Name string `toml:"name" json:"name"`
 
 	Port int `toml:"port" json:"port"`
-
-	MaxIdleConns int `toml:"max-idle-conns" json:"max-idle-conns"`
-
-	MaxOpenConns int `toml:"max-open-conns" json:"max-open-conns"`
 }
 
 func (c *DBConfig) String() string {

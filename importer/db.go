@@ -219,9 +219,6 @@ func createDB(cfg DBConfig) (*sql.DB, error) {
 		return nil, errors.Trace(err)
 	}
 
-	db.SetMaxIdleConns(cfg.MaxIdleConns)
-	db.SetMaxOpenConns(cfg.MaxOpenConns)
-
 	return db, nil
 }
 
