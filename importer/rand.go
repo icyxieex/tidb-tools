@@ -33,11 +33,11 @@ func init() {
 }
 
 func randInt(min int, max int) int {
-	return min + rand.Intn(max-min+1)
+	return min + rand.Intn(max-min) + 1
 }
 
 func randInt64(min int64, max int64) int64 {
-	return min + rand.Int63n(max-min+1)
+	return min + rand.Int63n(max-min) + 1
 }
 
 func randFloat64(min int64, max int64, prec int) float64 {
