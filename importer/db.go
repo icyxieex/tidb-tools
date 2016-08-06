@@ -49,10 +49,6 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 	return randInt64(min, max)
 }
 
-// func randDateValue(column *column) int64 {
-
-// }
-
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -173,7 +169,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqTimestamp())...)
 		} else {
-			data = append(data, []byte(randTimestamp())...)
+			data = append(data, []byte(randTimestamp(column.min, column.max))...)
 		}
 
 		data = append(data, '\'')
@@ -193,7 +189,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqYear())...)
 		} else {
-			data = append(data, []byte(randYear())...)
+			data = append(data, []byte(randYear(column.min, column.max))...)
 		}
 
 		data = append(data, '\'')

@@ -22,6 +22,7 @@ import (
 
 const (
 	alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	yearFormat     = "2006"
 	dateFormat     = "2006-01-02"
 	timeFormat     = "15:04:05"
 	dateTimeFormat = "2006-01-02 15:04:05"
@@ -99,17 +100,37 @@ func randTime(min string, max string) string {
 	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
 }
 
-func randTimestamp() string {
-	now := time.Now()
-	year := now.Year() - randInt(0, 3)
-	month := randInt(1, 12)
-	day := randInt(1, 28)
-	hour := randInt(0, 23)
-	min := randInt(0, 59)
-	sec := randInt(0, 59)
-	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, min, sec)
+func randTimestamp(min string, max string) string {
+	if len(min) == 0 {
+		year := time.Now().Year()
+		month := randInt(1, 12)
+		day := randInt(1, 28)
+		hour := randInt(0, 23)
+		min := randInt(0, 59)
+		sec := randInt(0, 59)
+		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, min, sec)
+	}
+
+	minTime, _ := time.Parse(dateTimeFormat, min)
+	if len(max) == 0 {
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+	}
+
+	maxTime, _ := time.Parse(dateTimeFormat, max)
+	seconds := int(maxTime.Sub(minTime).Seconds())
+	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
+	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
-func randYear() string {
-	return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 3))
+func randYear(min string, max string) string {
+	if len(min) == 0 || len(max) == 0 {
+		return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 10))
+	}
+
+	minTime, _ := time.Parse(yearFormat, min)
+	maxTime, _ := time.Parse(yearFormat, max)
+	seconds := int(maxTime.Sub(minTime).Seconds())
+	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
+	return fmt.Sprintf("%04d", t.Year())
 }
