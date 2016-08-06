@@ -24,7 +24,7 @@ import (
 // NewConfig creates a new config.
 func NewConfig() *Config {
 	cfg := &Config{}
-	cfg.FlagSet = flag.NewFlagSet("tidb-importer", flag.ContinueOnError)
+	cfg.FlagSet = flag.NewFlagSet("importer", flag.ContinueOnError)
 	fs := cfg.FlagSet
 
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
