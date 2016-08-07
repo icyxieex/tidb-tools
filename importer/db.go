@@ -49,6 +49,12 @@ func randInt64Value(column *column, min int64, max int64) int64 {
 	return randInt64(min, max)
 }
 
+func uniqInt64Value(column *column, min int64, max int64) int64 {
+	min, max = intRangeValue(column, min, max)
+	column.data.setInitInt64Value(column.step, min, max)
+	return column.data.uniqInt64()
+}
+
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -87,7 +93,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeTiny:
 		var data int64
 		if isUnique {
-			data = column.data.uniqInt64()
+			data = uniqInt64Value(column, 0, math.MaxUint8)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint8)
@@ -99,7 +105,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeShort:
 		var data int64
 		if isUnique {
-			data = column.data.uniqInt64()
+			data = uniqInt64Value(column, 0, math.MaxUint16)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint16)
@@ -111,7 +117,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLong:
 		var data int64
 		if isUnique {
-			data = column.data.uniqInt64()
+			data = uniqInt64Value(column, 0, math.MaxUint32)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint32)
@@ -123,7 +129,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLonglong:
 		var data int64
 		if isUnique {
-			data = column.data.uniqInt64()
+			data = uniqInt64Value(column, 0, math.MaxInt64)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxInt64)
@@ -145,7 +151,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
 		var data float64
 		if isUnique {
-			data = column.data.uniqFloat64()
+			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
 		} else {
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64))

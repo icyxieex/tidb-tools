@@ -16,7 +16,6 @@ package main
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -25,27 +24,68 @@ var defaultStep int64 = 1
 type datum struct {
 	sync.Mutex
 
-	intValue  int64
-	timeValue time.Time
-	step      int64
+	intValue    int64
+	minIntValue int64
+	maxIntValue int64
+	timeValue   time.Time
+	step        int64
+
+	init     bool
+	useRange bool
 }
 
-func newDatum(step int64) *datum {
-	return &datum{intValue: -1, step: step}
+func newDatum() *datum {
+	return &datum{intValue: -1}
+}
+
+func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.init {
+		return
+	}
+
+	d.step = step
+
+	if min != -1 {
+		d.minIntValue = min
+		d.intValue = min
+	}
+
+	if min < max {
+		d.maxIntValue = max
+		d.useRange = true
+	}
+
+	d.init = true
 }
 
 func (d *datum) uniqInt64() int64 {
-	data := atomic.AddInt64(&d.intValue, d.step)
+	d.Lock()
+	defer d.Unlock()
+
+	data := d.intValue
+	if d.useRange {
+		if d.intValue+d.step > d.maxIntValue {
+			return data
+		}
+	}
+
+	d.intValue += d.step
 	return data
 }
 
 func (d *datum) uniqFloat64() float64 {
-	data := atomic.AddInt64(&d.intValue, d.step)
+	data := d.uniqInt64()
 	return float64(data)
 }
 
 func (d *datum) uniqString(n int) string {
-	data := atomic.AddInt64(&d.intValue, 1)
+	d.Lock()
+	d.intValue += 1
+	data := d.intValue
+	d.Unlock()
 
 	var value []byte
 	for ; ; n-- {

@@ -89,8 +89,6 @@ func (col *column) parseColumnComment() {
 		kvs := strings.Split(field, "=")
 		col.parseRule(kvs)
 	}
-
-	col.data = newDatum(col.step)
 }
 
 func (col *column) parseColumn(cd *ast.ColumnDef) {
@@ -204,7 +202,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
 	for i, col := range stmt.Cols {
-		column := &column{idx: i + 1, table: t, step: defaultStep}
+		column := &column{idx: i + 1, table: t, step: defaultStep, data: newDatum()}
 		column.parseColumn(col)
 	}
 
