@@ -34,6 +34,7 @@ type column struct {
 	min     string
 	max     string
 	step    int64
+	set     []string
 
 	table *table
 }
@@ -43,8 +44,8 @@ func (col *column) String() string {
 		return "<nil>"
 	}
 
-	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v, min: %s, max: %s, step: %d\n",
-		col.idx, col.name, col.tp, col.min, col.max, col.step)
+	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v, min: %s, max: %s, step: %d, set: %v\n",
+		col.idx, col.name, col.tp, col.min, col.max, col.step, col.set)
 }
 
 func (col *column) parseRule(kvs []string) {
@@ -67,6 +68,11 @@ func (col *column) parseRule(kvs []string) {
 		col.step, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			log.Fatal(err)
+		}
+	} else if key == "set" {
+		fields := strings.Split(value, ",")
+		for _, field := range fields {
+			col.set = append(col.set, strings.TrimSpace(field))
 		}
 	}
 }
