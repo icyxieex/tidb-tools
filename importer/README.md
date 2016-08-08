@@ -78,7 +78,8 @@ mysql> select * from t;
 10 rows in set (0.00 sec)
 ```
 Support Type: 
-tinyint / smallint / int / bigint / float / double / decimal / char / varchar / date / time / datetime / timestamp.
+
+tinyint | smallint | int | bigint | float | double | decimal | char | varchar | date | time | datetime | timestamp.
 
 
 ### step
@@ -106,7 +107,8 @@ mysql> select * from t;
 ```
 
 Support Type [can only be used in unique index]: 
-tinyint / smallint / int / bigint / float / double / decimal / date / time / datetime / timestamp.
+
+tinyint | smallint | int | bigint | float | double | decimal | date | time | datetime | timestamp.
 
 
 ### set
@@ -133,7 +135,8 @@ mysql> select * from t;
 10 rows in set (0.00 sec)
 ```
 Support Type [can only be used in none unique index]: 
-tinyint / smallint / int / bigint / float / double / decimal.
+
+tinyint | smallint | int | bigint | float | double | decimal.
 
 ## License
 Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
