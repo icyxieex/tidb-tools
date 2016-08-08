@@ -48,7 +48,7 @@ Usage of importer:
 Or use config file.
 
 ```
-./importer -c config.toml
+./importer --config=config.toml
 ```
 
 ## Rules
