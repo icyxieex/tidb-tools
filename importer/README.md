@@ -45,6 +45,12 @@ Usage of importer:
 ./importer -t "create table t(a int primary key, b double, c varchar(10), d date unique, e time unique, f timestamp unique, g date unique, h datetime unique, i year unique);" -i "create unique index u_b on t(b);" -c 1 -n 10 -P 4000
 ```
 
+Or use config file.
+
+```
+./importer -c config.toml
+```
+
 ## Rules
 Moreover, we have some interesting rules for column value generating, like:
 

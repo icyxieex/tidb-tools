@@ -35,7 +35,7 @@ type datum struct {
 }
 
 func newDatum() *datum {
-	return &datum{intValue: -1}
+	return &datum{intValue: -1, step: 1}
 }
 
 func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
