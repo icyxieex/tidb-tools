@@ -1,0 +1,22 @@
+# Syncer Configuration.
+
+log-level = "info"
+
+server-id = 101
+
+file = ""
+pos = 4
+
+[from]
+host = "127.0.0.1"
+user = "root"
+password = ""
+port = 3306
+name = "test"
+
+[to]
+host = "127.0.0.1"
+user = "root"
+password = ""
+port = 4001
+name = "test"
