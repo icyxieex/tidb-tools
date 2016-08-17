@@ -348,5 +348,9 @@ func createDB(cfg DBConfig) (*sql.DB, error) {
 }
 
 func closeDB(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+
 	return errors.Trace(db.Close())
 }

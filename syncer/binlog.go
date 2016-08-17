@@ -17,22 +17,24 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
-	"github.com/siddontang/go-mysql/client"
+	"github.com/ngaut/log"
 	"github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go/sync2"
 )
 
+var eventTimeout = 3 * time.Second
+
 // Syncer can sync your MySQL data into another MySQL database.
 type Syncer struct {
+	m sync.Mutex
+
 	cfg *Config
 
 	syncer *replication.BinlogSyncer
-
-	connLock sync.Mutex
-	conn     *client.Conn
 
 	pos mysql.Position
 
@@ -62,8 +64,20 @@ func NewSyncer(cfg *Config) *Syncer {
 	return syncer
 }
 
-// StartSync starts sync.
-func (s *Syncer) StartSync() error {
+// StartSync starts syncer.
+func (s *Syncer) Start() error {
+	s.wg.Add(1)
+	err := s.run()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func (s *Syncer) run() error {
+	defer s.wg.Done()
+
 	s.syncer = replication.NewBinlogSyncer(uint32(s.cfg.ServerID), "mysql")
 	err := s.syncer.RegisterSlave(s.cfg.From.Host, uint16(s.cfg.From.Port), s.cfg.From.User, s.cfg.From.Password)
 	if err != nil {
@@ -86,9 +100,21 @@ func (s *Syncer) StartSync() error {
 	}
 
 	for {
-		e, err := streamer.GetEvent()
-		if err != nil {
-			return errors.Errorf("Get event error: %v", err)
+		e, err := streamer.GetEventTimeout(eventTimeout)
+		if err != nil && !mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
+			return errors.Trace(err)
+		}
+		if mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
+			select {
+			case _, ok := <-s.quit:
+				if !ok {
+					log.Info("quit channel has been closed")
+					return nil
+				}
+			default:
+			}
+
+			continue
 		}
 
 		switch ev := e.Event.(type) {
@@ -137,4 +163,39 @@ func (s *Syncer) StartSync() error {
 			}
 		}
 	}
+}
+
+func (s *Syncer) isClosed() bool {
+	return s.closed.Get()
+}
+
+// Close closes syncer.
+func (s *Syncer) Close() {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	if s.isClosed() {
+		return
+	}
+
+	close(s.quit)
+
+	s.wg.Wait()
+
+	err := closeDB(s.fromDB)
+	if err != nil {
+		log.Error(err)
+	}
+
+	err = closeDB(s.toDB)
+	if err != nil {
+		log.Error(err)
+	}
+
+	if s.syncer != nil {
+		s.syncer.Close()
+		s.syncer = nil
+	}
+
+	s.closed.Set(true)
 }
