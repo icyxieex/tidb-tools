@@ -35,7 +35,7 @@ func NewConfig() *Config {
 
 	fs.IntVar(&cfg.Pos, "pos", 4, "MySQL binlog position")
 
-	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
+	fs.StringVar(&cfg.LogLevel, "L", "debug", "log level: debug, info, warn, error, fatal")
 
 	return cfg
 }

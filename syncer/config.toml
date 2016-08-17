@@ -1,6 +1,6 @@
 # Syncer Configuration.
 
-log-level = "info"
+log-level = "debug"
 
 server-id = 101
 
@@ -18,5 +18,5 @@ name = "test"
 host = "127.0.0.1"
 user = "root"
 password = ""
-port = 4001
+port = 4000
 name = "test"

@@ -22,6 +22,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/parser"
 )
 
 const invalidIdx = -1
@@ -335,6 +337,30 @@ func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns [
 	}
 
 	return sqls, nil
+}
+
+func isDDLSQL(sql string) (bool, error) {
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	_, isDDL := stmt.(ast.DDLNode)
+	return isDDL, nil
+}
+
+func genDDLSQL(sql string, schema string) (string, error) {
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	_, isCreateDatabase := stmt.(*ast.CreateDatabaseStmt)
+	if isCreateDatabase {
+		return fmt.Sprintf("%s;", sql), nil
+	}
+
+	return fmt.Sprintf("use %s; %s;", schema, sql), nil
 }
 
 func createDB(cfg DBConfig) (*sql.DB, error) {

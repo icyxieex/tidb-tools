@@ -15,7 +15,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"sync"
 	"time"
 
@@ -26,7 +25,12 @@ import (
 	"github.com/siddontang/go/sync2"
 )
 
-var eventTimeout = 3 * time.Second
+var (
+	maxRetryCount = 3
+
+	retryTimeout = time.Second
+	eventTimeout = 3 * time.Second
+)
 
 // Syncer can sync your MySQL data into another MySQL database.
 type Syncer struct {
@@ -39,9 +43,6 @@ type Syncer struct {
 	pos mysql.Position
 
 	wg sync.WaitGroup
-
-	tableLock sync.Mutex
-	// tables    map[string]*schema.Table
 
 	fromDB *sql.DB
 	toDB   *sql.DB
@@ -56,11 +57,7 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer.cfg = cfg
 	syncer.closed.Set(false)
 	syncer.quit = make(chan struct{})
-
-	// syncer.tables = make(map[string]*schema.Table)
-
 	syncer.pos = mysql.Position{cfg.File, uint32(cfg.Pos)}
-
 	return syncer
 }
 
@@ -89,10 +86,10 @@ func (s *Syncer) run() error {
 		return errors.Errorf("Start sync error: %v", err)
 	}
 
-	// s.toDB, err = createDB(s.cfg.To)
-	// if err != nil {
-	// 	return errors.Errorf("Start sync error: %v", errors.ErrorStack(err))
-	// }
+	s.toDB, err = createDB(s.cfg.To)
+	if err != nil {
+		return errors.Errorf("Start sync error: %v", errors.ErrorStack(err))
+	}
 
 	streamer, err := s.syncer.StartSync(s.pos)
 	if err != nil {
@@ -122,12 +119,12 @@ func (s *Syncer) run() error {
 			schema := string(ev.Table.Schema)
 			table := string(ev.Table.Table)
 
-			columns, err := getTableColumns(s.fromDB, schema, table)
+			columns, err := getTableColumns(s.toDB, schema, table)
 			if err != nil {
 				return errors.Errorf("get table columns failed: %v", err)
 			}
 
-			indexColumns, err := getTableIndexColumns(s.fromDB, schema, table)
+			indexColumns, err := getTableIndexColumns(s.toDB, schema, table)
 			if err != nil {
 				return errors.Errorf("get table index columns failed: %v", err)
 			}
@@ -139,8 +136,12 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen insert sqls failed: %v", err)
 				}
 
-				for i, sql := range sqls {
-					fmt.Printf("[insert]%d - %s\n", i, sql)
+				for _, sql := range sqls {
+					log.Debug(sql)
+					err = s.executeSQL(sql)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 				sqls, err := genUpdateSQLs(schema, table, ev.Rows, columns, indexColumns)
@@ -148,8 +149,12 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
 
-				for i, sql := range sqls {
-					fmt.Printf("[update]%d - %s\n", i, sql)
+				for _, sql := range sqls {
+					log.Debug(sql)
+					err = s.executeSQL(sql)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 				sqls, err := genDeleteSQLs(schema, table, ev.Rows, columns, indexColumns)
@@ -157,12 +162,67 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}
 
-				for i, sql := range sqls {
-					fmt.Printf("[delete]%d - %s\n", i, sql)
+				for _, sql := range sqls {
+					log.Debug(sql)
+					err = s.executeSQL(sql)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		case *replication.QueryEvent:
+			sql := string(ev.Query)
+			ok, err := isDDLSQL(sql)
+			if err != nil {
+				return errors.Errorf("parse query event failed: %v", err)
+			}
+			if ok {
+				sql, err = genDDLSQL(sql, string(ev.Schema))
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				log.Debug(sql)
+
+				err = s.executeSQL(sql)
+				if err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}
 	}
+}
+
+func (s *Syncer) executeSQL(sql string) error {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	var err error
+	for i := 0; i < maxRetryCount; i++ {
+		if s.toDB == nil {
+			time.Sleep(retryTimeout)
+
+			s.toDB, err = createDB(s.cfg.To)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		_, err = s.toDB.Exec(sql)
+		if err != nil {
+			s.toDB = nil
+			continue
+		}
+
+		return nil
+	}
+
+	if err != nil {
+		log.Errorf("execute sql[%s] failed %v", sql, errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 func (s *Syncer) isClosed() bool {
