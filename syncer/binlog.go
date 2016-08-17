@@ -194,9 +194,6 @@ func (s *Syncer) run() error {
 }
 
 func (s *Syncer) executeSQL(sql string) error {
-	s.m.Lock()
-	defer s.m.Unlock()
-
 	var err error
 	for i := 0; i < maxRetryCount; i++ {
 		if s.toDB == nil {

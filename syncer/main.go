@@ -35,6 +35,8 @@ func main() {
 		os.Exit(2)
 	}
 
+	log.SetLevelByString(cfg.LogLevel)
+
 	log.Infof("%v", cfg)
 
 	syncer := NewSyncer(cfg)

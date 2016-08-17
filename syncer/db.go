@@ -62,9 +62,9 @@ func columnValue(value interface{}) string {
 	case float64:
 		data = strconv.FormatFloat(float64(v), 'f', -1, 64)
 	case string:
-		data = v
+		data = fmt.Sprintf("'%s'", v)
 	case []byte:
-		data = string(v)
+		data = fmt.Sprintf("'%s'", v)
 	default:
 		data = fmt.Sprintf("%v", v)
 	}
