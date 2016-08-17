@@ -98,7 +98,12 @@ func (s *Syncer) StartSync() error {
 
 			columns, err := getTableColumns(s.fromDB, schema, table)
 			if err != nil {
-				return errors.Errorf("parse rows event failed: %v", err)
+				return errors.Errorf("get table columns failed: %v", err)
+			}
+
+			indexColumns, err := getTableIndexColumns(s.fromDB, schema, table)
+			if err != nil {
+				return errors.Errorf("get table index columns failed: %v", err)
 			}
 
 			switch e.Header.EventType {
@@ -112,7 +117,7 @@ func (s *Syncer) StartSync() error {
 					fmt.Printf("[insert]%d - %s\n", i, sql)
 				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				sqls, err := genUpdateSQLs(schema, table, ev.Rows, columns)
+				sqls, err := genUpdateSQLs(schema, table, ev.Rows, columns, indexColumns)
 				if err != nil {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
@@ -121,7 +126,7 @@ func (s *Syncer) StartSync() error {
 					fmt.Printf("[update]%d - %s\n", i, sql)
 				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				sqls, err := genDeleteSQLs(schema, table, ev.Rows, columns)
+				sqls, err := genDeleteSQLs(schema, table, ev.Rows, columns, indexColumns)
 				if err != nil {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}
