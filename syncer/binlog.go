@@ -101,16 +101,17 @@ func (s *Syncer) run() error {
 		if err != nil && !mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
 			return errors.Trace(err)
 		}
-		if mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
-			select {
-			case _, ok := <-s.quit:
-				if !ok {
-					log.Info("quit channel has been closed")
-					return nil
-				}
-			default:
-			}
 
+		select {
+		case _, ok := <-s.quit:
+			if !ok {
+				log.Info("quit channel has been closed")
+				return nil
+			}
+		default:
+		}
+
+		if mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
 			continue
 		}
 
