@@ -196,7 +196,7 @@ func genInsertSQLs(schema string, table string, datas [][]interface{}, columns [
 		}
 
 		valueList := strings.Join(values, ",")
-		sql := fmt.Sprintf("insert into %s.%s (%s) values (%s);", schema, table, columnList, valueList)
+		sql := fmt.Sprintf("replace into %s.%s (%s) values (%s);", schema, table, columnList, valueList)
 		sqls = append(sqls, sql)
 	}
 
