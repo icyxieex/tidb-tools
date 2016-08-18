@@ -132,7 +132,10 @@ func (s *Syncer) addCount(tp opType) {
 
 func (s *Syncer) addJob(job *job) {
 	s.jobs <- job
-	<-job.done
+
+	if job.done != nil {
+		<-job.done
+	}
 }
 
 func (s *Syncer) sync() {
@@ -170,7 +173,10 @@ func (s *Syncer) sync() {
 		}
 
 		s.addCount(tp)
-		job.done <- struct{}{}
+
+		if job.done != nil {
+			job.done <- struct{}{}
+		}
 	}
 }
 
@@ -236,7 +242,7 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen insert sqls failed: %v", err)
 				}
 
-				job := &job{tp: insert, sqls: sqls, done: s.done}
+				job := &job{tp: insert, sqls: sqls}
 				s.addJob(job)
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 				sqls, err := genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
@@ -244,7 +250,7 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
 
-				job := &job{tp: update, sqls: sqls, done: s.done}
+				job := &job{tp: update, sqls: sqls}
 				s.addJob(job)
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 				sqls, err := genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
@@ -252,7 +258,7 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}
 
-				job := &job{tp: del, sqls: sqls, done: s.done}
+				job := &job{tp: del, sqls: sqls}
 				s.addJob(job)
 			}
 		case *replication.QueryEvent:
