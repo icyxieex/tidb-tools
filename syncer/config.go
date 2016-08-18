@@ -35,6 +35,8 @@ func NewConfig() *Config {
 
 	fs.IntVar(&cfg.Pos, "pos", 4, "MySQL binlog position")
 
+	fs.Int64Var(&cfg.Batch, "b", 1, "batch commit count")
+
 	fs.StringVar(&cfg.LogLevel, "L", "debug", "log level: debug, info, warn, error, fatal")
 
 	return cfg
@@ -71,6 +73,8 @@ type Config struct {
 	File string `toml:"file" json:"file"`
 
 	Pos int `toml:"pos" json:"pos"`
+
+	Batch int64 `toml:"batch" json:"batch"`
 
 	From DBConfig `toml:"from" json:"from"`
 

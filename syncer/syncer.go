@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	maxRetryCount = 3
+	maxRetryCount = 2
 
 	retryTimeout = time.Second
 	eventTimeout = 3 * time.Second
@@ -51,11 +51,15 @@ type Syncer struct {
 	fromDB *sql.DB
 	toDB   *sql.DB
 
-	quit   chan struct{}
+	quit chan struct{}
+	done chan struct{}
+	jobs chan *job
+
 	closed sync2.AtomicBool
 
-	start       time.Time
-	lastTime    time.Time
+	start    time.Time
+	lastTime time.Time
+
 	ddlCount    sync2.AtomicInt64
 	insertCount sync2.AtomicInt64
 	updateCount sync2.AtomicInt64
@@ -75,12 +79,14 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer.updateCount.Set(0)
 	syncer.deleteCount.Set(0)
 	syncer.quit = make(chan struct{})
+	syncer.done = make(chan struct{})
+	syncer.jobs = make(chan *job, 100)
 	syncer.pos = mysql.Position{cfg.File, uint32(cfg.Pos)}
 	syncer.tables = make(map[string]*table)
 	return syncer
 }
 
-// StartSync starts syncer.
+// Start starts syncer.
 func (s *Syncer) Start() error {
 	s.wg.Add(1)
 
@@ -107,6 +113,65 @@ func (s *Syncer) getTable(schema string, table string) (*table, error) {
 
 	s.tables[key] = t
 	return t, nil
+}
+
+func (s *Syncer) addCount(tp opType) {
+	switch tp {
+	case insert:
+		s.insertCount.Add(1)
+	case update:
+		s.updateCount.Add(1)
+	case del:
+		s.deleteCount.Add(1)
+	case ddl:
+		s.ddlCount.Add(1)
+	}
+
+	s.count.Add(1)
+}
+
+func (s *Syncer) addJob(job *job) {
+	s.jobs <- job
+	<-job.done
+}
+
+func (s *Syncer) sync() {
+	defer s.wg.Done()
+
+	var (
+		sqls  []string
+		err   error
+		count int64
+	)
+	for job := range s.jobs {
+		tp := job.tp
+		switch tp {
+		case insert:
+			count++
+			sqls = append(sqls, job.sqls...)
+		default:
+			err = s.executeSQL(sqls)
+			if err != nil {
+				log.Fatalf(errors.ErrorStack(err))
+			}
+
+			sqls = job.sqls
+			count = 0
+		}
+
+		if count == s.cfg.Batch || count == 0 {
+			err = s.executeSQL(sqls)
+			if err != nil {
+				log.Fatalf(errors.ErrorStack(err))
+			}
+
+			count = 0
+			sqls = []string{}
+		}
+
+		s.addCount(tp)
+		job.done <- struct{}{}
+	}
 }
 
 func (s *Syncer) run() error {
@@ -136,7 +201,8 @@ func (s *Syncer) run() error {
 	s.start = time.Now()
 	s.lastTime = s.start
 
-	s.wg.Add(1)
+	s.wg.Add(2)
+	go s.sync()
 	go s.printStatus()
 
 	for {
@@ -160,7 +226,7 @@ func (s *Syncer) run() error {
 		case *replication.RowsEvent:
 			table, err := s.getTable(string(ev.Table.Schema), string(ev.Table.Table))
 			if err != nil {
-				return errors.Errorf("get table columns failed: %v", err)
+				return errors.Errorf("get table info failed: %v", err)
 			}
 
 			switch e.Header.EventType {
@@ -170,48 +236,24 @@ func (s *Syncer) run() error {
 					return errors.Errorf("gen insert sqls failed: %v", err)
 				}
 
-				for _, sql := range sqls {
-					log.Debug(sql)
-					err = s.executeSQL(sql)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
-					s.insertCount.Add(1)
-					s.count.Add(1)
-				}
+				job := &job{tp: insert, sqls: sqls, done: s.done}
+				s.addJob(job)
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 				sqls, err := genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
 
-				for _, sql := range sqls {
-					log.Debug(sql)
-					err = s.executeSQL(sql)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
-					s.updateCount.Add(1)
-					s.count.Add(1)
-				}
+				job := &job{tp: update, sqls: sqls, done: s.done}
+				s.addJob(job)
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 				sqls, err := genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}
 
-				for _, sql := range sqls {
-					log.Debug(sql)
-					err = s.executeSQL(sql)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
-					s.deleteCount.Add(1)
-					s.count.Add(1)
-				}
+				job := &job{tp: del, sqls: sqls, done: s.done}
+				s.addJob(job)
 			}
 		case *replication.QueryEvent:
 			sql := string(ev.Query)
@@ -225,15 +267,8 @@ func (s *Syncer) run() error {
 					return errors.Trace(err)
 				}
 
-				log.Debug(sql)
-
-				err = s.executeSQL(sql)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				s.ddlCount.Add(1)
-				s.count.Add(1)
+				job := &job{tp: ddl, sqls: []string{sql}, done: s.done}
+				s.addJob(job)
 			}
 		}
 	}
@@ -271,10 +306,20 @@ func (s *Syncer) printStatus() {
 	}
 }
 
-func (s *Syncer) executeSQL(sql string) error {
-	var err error
+func (s *Syncer) executeSQL(sqls []string) error {
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	var (
+		err error
+		txn *sql.Tx
+	)
+
+LOOP:
 	for i := 0; i < maxRetryCount; i++ {
 		if s.toDB == nil {
+			log.Debugf("execute sql retry %d - %v", i, sqls)
 			time.Sleep(retryTimeout)
 
 			s.toDB, err = createDB(s.cfg.To)
@@ -283,8 +328,34 @@ func (s *Syncer) executeSQL(sql string) error {
 			}
 		}
 
-		_, err = s.toDB.Exec(sql)
+		txn, err = s.toDB.Begin()
 		if err != nil {
+			s.toDB = nil
+			continue
+		}
+
+		for _, sql := range sqls {
+			log.Debug(sql)
+
+			_, err = s.toDB.Exec(sql)
+			if err != nil {
+				rerr := txn.Rollback()
+				if rerr != nil {
+					return errors.Trace(err)
+				}
+
+				s.toDB = nil
+				continue LOOP
+			}
+		}
+
+		err = txn.Commit()
+		if err != nil {
+			rerr := txn.Rollback()
+			if rerr != nil {
+				return errors.Trace(err)
+			}
+
 			s.toDB = nil
 			continue
 		}
@@ -293,7 +364,7 @@ func (s *Syncer) executeSQL(sql string) error {
 	}
 
 	if err != nil {
-		log.Errorf("execute sql[%s] failed %v", sql, errors.ErrorStack(err))
+		log.Errorf("execute sqls[%v] failed %v", sqls, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 

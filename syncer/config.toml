@@ -7,6 +7,8 @@ server-id = 101
 file = ""
 pos = 4
 
+batch = 1
+
 [from]
 host = "127.0.0.1"
 user = "root"

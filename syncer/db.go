@@ -26,6 +26,22 @@ import (
 	"github.com/pingcap/tidb/parser"
 )
 
+type opType byte
+
+const (
+	unknown opType = iota
+	insert
+	update
+	del
+	ddl
+)
+
+type job struct {
+	tp   opType
+	sqls []string
+	done chan struct{}
+}
+
 type column struct {
 	idx      int
 	name     string
@@ -153,6 +169,9 @@ func getTableColumns(db *sql.DB, table *table) error {
 	if table.schema == "" || table.name == "" {
 		return errors.New("schema/table is empty")
 	}
+	if db == nil {
+		return errors.New("invalid db conn")
+	}
 
 	querySQL := fmt.Sprintf("show columns from %s.%s", table.schema, table.name)
 	rows, err := db.Query(querySQL)
@@ -212,6 +231,9 @@ func getTableColumns(db *sql.DB, table *table) error {
 func getTableIndex(db *sql.DB, table *table) error {
 	if table.schema == "" || table.name == "" {
 		return errors.New("schema/table is empty")
+	}
+	if db == nil {
+		return errors.New("invalid db conn")
 	}
 
 	querySQL := fmt.Sprintf("show index from %s.%s", table.schema, table.name)
