@@ -103,11 +103,9 @@ func (s *Syncer) run() error {
 		}
 
 		select {
-		case _, ok := <-s.quit:
-			if !ok {
-				log.Info("quit channel has been closed")
-				return nil
-			}
+		case <-s.quit:
+			log.Info("ready to quit!")
+			return nil
 		default:
 		}
 
@@ -117,22 +115,14 @@ func (s *Syncer) run() error {
 
 		switch ev := e.Event.(type) {
 		case *replication.RowsEvent:
-			schema := string(ev.Table.Schema)
-			table := string(ev.Table.Table)
-
-			columns, err := getTableColumns(s.toDB, schema, table)
+			table, err := getTable(s.toDB, string(ev.Table.Schema), string(ev.Table.Table))
 			if err != nil {
 				return errors.Errorf("get table columns failed: %v", err)
 			}
 
-			indexColumns, err := getTableIndexColumns(s.toDB, schema, table)
-			if err != nil {
-				return errors.Errorf("get table index columns failed: %v", err)
-			}
-
 			switch e.Header.EventType {
 			case replication.WRITE_ROWS_EVENTv0, replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-				sqls, err := genInsertSQLs(schema, table, ev.Rows, columns)
+				sqls, err := genInsertSQLs(table.schema, table.name, ev.Rows, table.columns)
 				if err != nil {
 					return errors.Errorf("gen insert sqls failed: %v", err)
 				}
@@ -145,7 +135,7 @@ func (s *Syncer) run() error {
 					}
 				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				sqls, err := genUpdateSQLs(schema, table, ev.Rows, columns, indexColumns)
+				sqls, err := genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
@@ -158,7 +148,7 @@ func (s *Syncer) run() error {
 					}
 				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				sqls, err := genDeleteSQLs(schema, table, ev.Rows, columns, indexColumns)
+				sqls, err := genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}

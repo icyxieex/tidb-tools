@@ -26,9 +26,21 @@ import (
 	"github.com/pingcap/tidb/parser"
 )
 
-const invalidIdx = -1
+type column struct {
+	idx      int
+	name     string
+	unsigned bool
+}
 
-func columnValue(value interface{}) string {
+type table struct {
+	schema string
+	name   string
+
+	columns      []*column
+	indexColumns []*column
+}
+
+func columnValue(value interface{}, unsigned bool) string {
 	var data string
 	switch v := value.(type) {
 	case nil:
@@ -40,15 +52,35 @@ func columnValue(value interface{}) string {
 			data = "0"
 		}
 	case int:
-		data = strconv.FormatInt(int64(v), 10)
+		if unsigned {
+			data = strconv.FormatUint(uint64(uint(v)), 10)
+		} else {
+			data = strconv.FormatInt(int64(v), 10)
+		}
 	case int8:
-		data = strconv.FormatInt(int64(v), 10)
+		if unsigned {
+			data = strconv.FormatUint(uint64(uint8(v)), 10)
+		} else {
+			data = strconv.FormatInt(int64(v), 10)
+		}
 	case int16:
-		data = strconv.FormatInt(int64(v), 10)
+		if unsigned {
+			data = strconv.FormatUint(uint64(uint16(v)), 10)
+		} else {
+			data = strconv.FormatInt(int64(v), 10)
+		}
 	case int32:
-		data = strconv.FormatInt(int64(v), 10)
+		if unsigned {
+			data = strconv.FormatUint(uint64(uint32(v)), 10)
+		} else {
+			data = strconv.FormatInt(int64(v), 10)
+		}
 	case int64:
-		data = strconv.FormatInt(int64(v), 10)
+		if unsigned {
+			data = strconv.FormatUint(uint64(v), 10)
+		} else {
+			data = strconv.FormatInt(int64(v), 10)
+		}
 	case uint8:
 		data = strconv.FormatUint(uint64(v), 10)
 	case uint16:
@@ -72,21 +104,62 @@ func columnValue(value interface{}) string {
 	return data
 }
 
-func getTableColumns(db *sql.DB, schema string, table string) ([]string, error) {
-	if schema == "" || table == "" {
-		return nil, errors.New("schema/table is empty")
+func findColumn(columns []*column, indexColumn string) *column {
+	for _, column := range columns {
+		if column.name == indexColumn {
+			return column
+		}
 	}
 
-	querySQL := fmt.Sprintf("show columns from %s.%s", schema, table)
-	rows, err := db.Query(querySQL)
+	return nil
+}
+
+func findColumns(columns []*column, indexColumns []string) []*column {
+	result := make([]*column, 0, len(indexColumns))
+
+	for _, name := range indexColumns {
+		column := findColumn(columns, name)
+		if column != nil {
+			result = append(result, column)
+		}
+	}
+
+	return result
+}
+
+func getTable(db *sql.DB, schema string, name string) (*table, error) {
+	table := &table{}
+	table.schema = schema
+	table.name = name
+
+	err := getTableColumns(db, table)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	err = getTableIndex(db, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return table, nil
+}
+
+func getTableColumns(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
+	}
+
+	querySQL := fmt.Sprintf("show columns from %s.%s", table.schema, table.name)
+	rows, err := db.Query(querySQL)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	defer rows.Close()
 
 	rowColumns, err := rows.Columns()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Show an example.
@@ -102,7 +175,7 @@ func getTableColumns(db *sql.DB, schema string, table string) ([]string, error) 
 	   +-------+---------+------+-----+---------+-------+
 	*/
 
-	var columns []string
+	idx := 0
 	for rows.Next() {
 		datas := make([]sql.RawBytes, len(rowColumns))
 		values := make([]interface{}, len(rowColumns))
@@ -113,31 +186,40 @@ func getTableColumns(db *sql.DB, schema string, table string) ([]string, error) 
 
 		err = rows.Scan(values...)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
-		field := string(datas[0])
-		columns = append(columns, field)
+		column := &column{}
+		column.idx = idx
+		column.name = string(datas[0])
+
+		// Check whether column has unsigned flag.
+		if strings.Contains(strings.ToLower(string(datas[1])), "unsigned") {
+			column.unsigned = true
+		}
+
+		table.columns = append(table.columns, column)
+		idx++
 	}
 
-	return columns, nil
+	return nil
 }
 
-func getTableIndexColumns(db *sql.DB, schema string, table string) ([]string, error) {
-	if schema == "" || table == "" {
-		return nil, errors.New("schema/table is empty")
+func getTableIndex(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
 	}
 
-	querySQL := fmt.Sprintf("show index from %s.%s", schema, table)
+	querySQL := fmt.Sprintf("show index from %s.%s", table.schema, table.name)
 	rows, err := db.Query(querySQL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer rows.Close()
 
 	rowColumns, err := rows.Columns()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Show an example.
@@ -164,7 +246,7 @@ func getTableIndexColumns(db *sql.DB, schema string, table string) ([]string, er
 
 		err = rows.Scan(values...)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		nonUnique := string(datas[1])
@@ -181,20 +263,34 @@ func getTableIndexColumns(db *sql.DB, schema string, table string) ([]string, er
 		}
 	}
 
-	return columns, nil
+	table.indexColumns = findColumns(table.columns, columns)
+	return nil
 }
 
-func genInsertSQLs(schema string, table string, datas [][]interface{}, columns []string) ([]string, error) {
+func genColumnList(columns []*column) string {
+	var columnList []byte
+	for i, column := range columns {
+		columnList = append(columnList, []byte(column.name)...)
+
+		if i != len(columns)-1 {
+			columnList = append(columnList, ',')
+		}
+	}
+
+	return string(columnList)
+}
+
+func genInsertSQLs(schema string, table string, datas [][]interface{}, columns []*column) ([]string, error) {
 	sqls := make([]string, 0, len(datas))
-	columnList := strings.Join(columns, ",")
+	columnList := genColumnList(columns)
 	for _, data := range datas {
 		if len(data) != len(columns) {
 			return nil, errors.Errorf("invalid columns and datas - %d, %d", len(datas), len(columns))
 		}
 
 		values := make([]string, 0, len(data))
-		for _, value := range data {
-			values = append(values, columnValue(value))
+		for i, value := range data {
+			values = append(values, columnValue(value, columns[i].unsigned))
 		}
 
 		valueList := strings.Join(values, ",")
@@ -205,47 +301,18 @@ func genInsertSQLs(schema string, table string, datas [][]interface{}, columns [
 	return sqls, nil
 }
 
-func findColumn(columns []string, indexColumn string) int {
-	for i, column := range columns {
-		if column == indexColumn {
-			return i
-		}
-	}
-
-	return invalidIdx
-}
-
-func findColumns(columns []string, indexColumns []string) []int {
-	idxes := make([]int, 0, len(indexColumns))
-
+func getColumnDatas(columns []*column, indexColumns []*column, data []interface{}) ([]*column, []interface{}) {
+	cols := make([]*column, 0, len(columns))
+	values := make([]interface{}, 0, len(columns))
 	for _, column := range indexColumns {
-		idx := findColumn(columns, column)
-		if idx != invalidIdx {
-			idxes = append(idxes, idx)
-		}
-	}
-
-	return idxes
-}
-
-func getColumnsAndDatas(columns []string, indexColumns []string, data []interface{}) ([]string, []interface{}) {
-	if len(indexColumns) == 0 {
-		return columns, data
-	}
-
-	cols := make([]string, 0, len(columns))
-	values := make([]interface{}, 0, len(data))
-	idxes := findColumns(columns, indexColumns)
-
-	for i := range idxes {
-		cols = append(cols, columns[i])
-		values = append(values, data[i])
+		cols = append(cols, column)
+		values = append(values, data[column.idx])
 	}
 
 	return cols, values
 }
 
-func genWhere(columns []string, data []interface{}) string {
+func genWhere(columns []*column, data []interface{}) string {
 	var kvs []byte
 	for i := range columns {
 		kvSplit := "="
@@ -254,29 +321,29 @@ func genWhere(columns []string, data []interface{}) string {
 		}
 
 		if i == len(columns)-1 {
-			kvs = append(kvs, []byte(fmt.Sprintf("%s %s %s", columns[i], kvSplit, columnValue(data[i])))...)
+			kvs = append(kvs, []byte(fmt.Sprintf("%s %s %s", columns[i].name, kvSplit, columnValue(data[i], columns[i].unsigned)))...)
 		} else {
-			kvs = append(kvs, []byte(fmt.Sprintf("%s %s %s and ", columns[i], kvSplit, columnValue(data[i])))...)
+			kvs = append(kvs, []byte(fmt.Sprintf("%s %s %s and ", columns[i].name, kvSplit, columnValue(data[i], columns[i].unsigned)))...)
 		}
 	}
 
 	return string(kvs)
 }
 
-func genKVs(columns []string, data []interface{}) string {
+func genKVs(columns []*column, data []interface{}) string {
 	var kvs []byte
 	for i := range columns {
 		if i == len(columns)-1 {
-			kvs = append(kvs, []byte(fmt.Sprintf("%s = %s", columns[i], columnValue(data[i])))...)
+			kvs = append(kvs, []byte(fmt.Sprintf("%s = %s", columns[i].name, columnValue(data[i], columns[i].unsigned)))...)
 		} else {
-			kvs = append(kvs, []byte(fmt.Sprintf("%s = %s, ", columns[i], columnValue(data[i])))...)
+			kvs = append(kvs, []byte(fmt.Sprintf("%s = %s, ", columns[i].name, columnValue(data[i], columns[i].unsigned)))...)
 		}
 	}
 
 	return string(kvs)
 }
 
-func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns []string, indexColumns []string) ([]string, error) {
+func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, error) {
 	sqls := make([]string, 0, len(datas)/2)
 	for i := 0; i < len(datas); i += 2 {
 		oldData := datas[i]
@@ -287,7 +354,7 @@ func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns [
 
 		oldValues := make([]interface{}, 0, len(oldData))
 		newValues := make([]interface{}, 0, len(newData))
-		updateColumns := make([]string, 0, len(indexColumns))
+		updateColumns := make([]*column, 0, len(indexColumns))
 
 		for j := range oldData {
 			if reflect.DeepEqual(oldData[j], newData[j]) {
@@ -303,7 +370,7 @@ func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns [
 
 		whereColumns, whereValues := updateColumns, oldValues
 		if len(indexColumns) > 0 {
-			whereColumns, whereValues = getColumnsAndDatas(columns, indexColumns, oldData)
+			whereColumns, whereValues = getColumnDatas(columns, indexColumns, oldData)
 		}
 
 		where := genWhere(whereColumns, whereValues)
@@ -314,7 +381,7 @@ func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns [
 	return sqls, nil
 }
 
-func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns []string, indexColumns []string) ([]string, error) {
+func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, error) {
 	sqls := make([]string, 0, len(datas))
 	for _, data := range datas {
 		if len(data) != len(columns) {
@@ -322,13 +389,13 @@ func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns [
 		}
 
 		values := make([]interface{}, 0, len(data))
-		for _, value := range data {
-			values = append(values, columnValue(value))
+		for i, value := range data {
+			values = append(values, columnValue(value, columns[i].unsigned))
 		}
 
 		whereColumns, whereValues := columns, data
 		if len(indexColumns) > 0 {
-			whereColumns, whereValues = getColumnsAndDatas(columns, indexColumns, data)
+			whereColumns, whereValues = getColumnDatas(columns, indexColumns, data)
 		}
 
 		where := genWhere(whereColumns, whereValues)
