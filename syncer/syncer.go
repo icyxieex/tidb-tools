@@ -55,6 +55,7 @@ type Syncer struct {
 	closed sync2.AtomicBool
 
 	start       time.Time
+	lastTime    time.Time
 	ddlCount    sync2.AtomicInt64
 	insertCount sync2.AtomicInt64
 	updateCount sync2.AtomicInt64
@@ -133,6 +134,7 @@ func (s *Syncer) run() error {
 	}
 
 	s.start = time.Now()
+	s.lastTime = s.start
 
 	s.wg.Add(1)
 	go s.printStatus()
@@ -249,20 +251,22 @@ func (s *Syncer) printStatus() {
 			return
 		case <-timer.C:
 			now := time.Now()
-			seconds := now.Unix() - s.start.Unix()
+			seconds := now.Unix() - s.lastTime.Unix()
+			totalSeconds := now.Unix() - s.start.Unix()
 			last := s.lastCount.Get()
 			total := s.count.Get()
 
-			recentTps, totalTps := int64(0), int64(0)
+			tps, totalTps := int64(0), int64(0)
 			if seconds > 0 {
-				recentTps = (total - last) / seconds
-				totalTps = total / seconds
+				tps = (total - last) / seconds
+				totalTps = total / totalSeconds
 			}
 
 			log.Infof("[syncer]total %d events, insert %d, update %d, delete %d, total tps %d, recent tps %d.",
-				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, recentTps)
+				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, tps)
 
 			s.lastCount.Set(total)
+			s.lastTime = time.Now()
 		}
 	}
 }
