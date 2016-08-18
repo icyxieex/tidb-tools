@@ -15,6 +15,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ var (
 
 	retryTimeout = time.Second
 	eventTimeout = 3 * time.Second
+	statusTime   = 10 * time.Second
 )
 
 // Syncer can sync your MySQL data into another MySQL database.
@@ -44,11 +46,21 @@ type Syncer struct {
 
 	wg sync.WaitGroup
 
+	tables map[string]*table
+
 	fromDB *sql.DB
 	toDB   *sql.DB
 
 	quit   chan struct{}
 	closed sync2.AtomicBool
+
+	start       time.Time
+	ddlCount    sync2.AtomicInt64
+	insertCount sync2.AtomicInt64
+	updateCount sync2.AtomicInt64
+	deleteCount sync2.AtomicInt64
+	lastCount   sync2.AtomicInt64
+	count       sync2.AtomicInt64
 }
 
 // NewSyncer creates a new Syncer.
@@ -56,20 +68,44 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer := new(Syncer)
 	syncer.cfg = cfg
 	syncer.closed.Set(false)
+	syncer.lastCount.Set(0)
+	syncer.count.Set(0)
+	syncer.insertCount.Set(0)
+	syncer.updateCount.Set(0)
+	syncer.deleteCount.Set(0)
 	syncer.quit = make(chan struct{})
 	syncer.pos = mysql.Position{cfg.File, uint32(cfg.Pos)}
+	syncer.tables = make(map[string]*table)
 	return syncer
 }
 
 // StartSync starts syncer.
 func (s *Syncer) Start() error {
 	s.wg.Add(1)
+
 	err := s.run()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	return nil
+}
+
+func (s *Syncer) getTable(schema string, table string) (*table, error) {
+	key := fmt.Sprintf("%s.%s", schema, table)
+
+	value, ok := s.tables[key]
+	if ok {
+		return value, nil
+	}
+
+	t, err := getTable(s.toDB, schema, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s.tables[key] = t
+	return t, nil
 }
 
 func (s *Syncer) run() error {
@@ -96,6 +132,11 @@ func (s *Syncer) run() error {
 		return errors.Errorf("Start sync error: %v", err)
 	}
 
+	s.start = time.Now()
+
+	s.wg.Add(1)
+	go s.printStatus()
+
 	for {
 		e, err := streamer.GetEventTimeout(eventTimeout)
 		if err != nil && !mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
@@ -115,7 +156,7 @@ func (s *Syncer) run() error {
 
 		switch ev := e.Event.(type) {
 		case *replication.RowsEvent:
-			table, err := getTable(s.toDB, string(ev.Table.Schema), string(ev.Table.Table))
+			table, err := s.getTable(string(ev.Table.Schema), string(ev.Table.Table))
 			if err != nil {
 				return errors.Errorf("get table columns failed: %v", err)
 			}
@@ -133,6 +174,9 @@ func (s *Syncer) run() error {
 					if err != nil {
 						return errors.Trace(err)
 					}
+
+					s.insertCount.Add(1)
+					s.count.Add(1)
 				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 				sqls, err := genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
@@ -146,6 +190,9 @@ func (s *Syncer) run() error {
 					if err != nil {
 						return errors.Trace(err)
 					}
+
+					s.updateCount.Add(1)
+					s.count.Add(1)
 				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
 				sqls, err := genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
@@ -159,6 +206,9 @@ func (s *Syncer) run() error {
 					if err != nil {
 						return errors.Trace(err)
 					}
+
+					s.deleteCount.Add(1)
+					s.count.Add(1)
 				}
 			}
 		case *replication.QueryEvent:
@@ -179,7 +229,40 @@ func (s *Syncer) run() error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+
+				s.ddlCount.Add(1)
+				s.count.Add(1)
 			}
+		}
+	}
+}
+
+func (s *Syncer) printStatus() {
+	defer s.wg.Done()
+
+	timer := time.NewTicker(statusTime)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-s.quit:
+			return
+		case <-timer.C:
+			now := time.Now()
+			seconds := now.Unix() - s.start.Unix()
+			last := s.lastCount.Get()
+			total := s.count.Get()
+
+			recentTps, totalTps := int64(0), int64(0)
+			if seconds > 0 {
+				recentTps = (total - last) / seconds
+				totalTps = total / seconds
+			}
+
+			log.Infof("[syncer]total %d events, insert %d, update %d, delete %d, total tps %d, recent tps %d.",
+				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, recentTps)
+
+			s.lastCount.Set(total)
 		}
 	}
 }

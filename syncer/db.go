@@ -142,6 +142,10 @@ func getTable(db *sql.DB, schema string, name string) (*table, error) {
 		return nil, errors.Trace(err)
 	}
 
+	if len(table.columns) == 0 {
+		return nil, errors.Errorf("invalid table %s.%s", schema, name)
+	}
+
 	return table, nil
 }
 
