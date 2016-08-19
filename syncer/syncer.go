@@ -31,18 +31,18 @@ var (
 
 	retryTimeout = time.Second
 	eventTimeout = 3 * time.Second
-	statusTime   = 10 * time.Second
+	statusTime   = 30 * time.Second
 )
 
 // Syncer can sync your MySQL data into another MySQL database.
 type Syncer struct {
-	m sync.Mutex
+	sync.Mutex
 
 	cfg *Config
 
-	syncer *replication.BinlogSyncer
+	meta Meta
 
-	pos mysql.Position
+	syncer *replication.BinlogSyncer
 
 	wg sync.WaitGroup
 
@@ -72,6 +72,7 @@ type Syncer struct {
 func NewSyncer(cfg *Config) *Syncer {
 	syncer := new(Syncer)
 	syncer.cfg = cfg
+	syncer.meta = NewLocalMeta(cfg.Meta)
 	syncer.closed.Set(false)
 	syncer.lastCount.Set(0)
 	syncer.count.Set(0)
@@ -81,18 +82,53 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer.quit = make(chan struct{})
 	syncer.done = make(chan struct{})
 	syncer.jobs = make(chan *job, 100)
-	syncer.pos = mysql.Position{cfg.File, uint32(cfg.Pos)}
 	syncer.tables = make(map[string]*table)
 	return syncer
 }
 
 // Start starts syncer.
 func (s *Syncer) Start() error {
-	s.wg.Add(1)
-
-	err := s.run()
+	err := s.meta.Load()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	s.wg.Add(1)
+
+	err = s.run()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func (s *Syncer) checkBinlogFormat() error {
+	rows, err := s.fromDB.Query(`SHOW GLOBAL VARIABLES LIKE "binlog_format";`)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	// Show an example.
+	/*
+		mysql> SHOW GLOBAL VARIABLES LIKE "binlog_format";
+		+---------------+-------+
+		| Variable_name | Value |
+		+---------------+-------+
+		| binlog_format | ROW   |
+		+---------------+-------+
+	*/
+	for rows.Next() {
+		var (
+			variable string
+			value    string
+		)
+
+		err = rows.Scan(&variable, &value)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -186,22 +222,27 @@ func (s *Syncer) run() error {
 	s.syncer = replication.NewBinlogSyncer(uint32(s.cfg.ServerID), "mysql")
 	err := s.syncer.RegisterSlave(s.cfg.From.Host, uint16(s.cfg.From.Port), s.cfg.From.User, s.cfg.From.Password)
 	if err != nil {
-		return errors.Errorf("Register slave error: %v", err)
+		return errors.Trace(err)
 	}
 
 	s.fromDB, err = createDB(s.cfg.From)
 	if err != nil {
-		return errors.Errorf("Start sync error: %v", err)
+		return errors.Trace(err)
 	}
 
 	s.toDB, err = createDB(s.cfg.To)
 	if err != nil {
-		return errors.Errorf("Start sync error: %v", errors.ErrorStack(err))
+		return errors.Trace(err)
 	}
 
-	streamer, err := s.syncer.StartSync(s.pos)
+	err = s.checkBinlogFormat()
 	if err != nil {
-		return errors.Errorf("Start sync error: %v", err)
+		return errors.Trace(err)
+	}
+
+	streamer, err := s.syncer.StartSync(s.meta.Pos())
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	s.start = time.Now()
@@ -210,6 +251,9 @@ func (s *Syncer) run() error {
 	s.wg.Add(2)
 	go s.sync()
 	go s.printStatus()
+
+	forceSave := false
+	pos := s.meta.Pos()
 
 	for {
 		e, err := streamer.GetEventTimeout(eventTimeout)
@@ -220,6 +264,11 @@ func (s *Syncer) run() error {
 		select {
 		case <-s.quit:
 			log.Info("ready to quit!")
+
+			err = s.meta.Save(pos, true)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			return nil
 		default:
 		}
@@ -228,11 +277,19 @@ func (s *Syncer) run() error {
 			continue
 		}
 
+		pos.Pos = e.Header.LogPos
+		forceSave = false
+
 		switch ev := e.Event.(type) {
+		case *replication.RotateEvent:
+			pos.Name = string(ev.NextLogName)
+			pos.Pos = uint32(ev.Position)
+			forceSave = true
+			log.Infof("rotate binlog to %v", pos)
 		case *replication.RowsEvent:
 			table, err := s.getTable(string(ev.Table.Schema), string(ev.Table.Table))
 			if err != nil {
-				return errors.Errorf("get table info failed: %v", err)
+				return errors.Trace(err)
 			}
 
 			switch e.Header.EventType {
@@ -277,6 +334,11 @@ func (s *Syncer) run() error {
 				s.addJob(job)
 			}
 		}
+
+		err = s.meta.Save(pos, forceSave)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 }
 
@@ -303,8 +365,8 @@ func (s *Syncer) printStatus() {
 				totalTps = total / totalSeconds
 			}
 
-			log.Infof("[syncer]total %d events, insert %d, update %d, delete %d, total tps %d, recent tps %d.",
-				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, tps)
+			log.Infof("[syncer]total events = %d , insert = %d, update = %d, delete = %d, total tps = %d, recent tps = %d, %s.",
+				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, tps, s.meta)
 
 			s.lastCount.Set(total)
 			s.lastTime = time.Now()
@@ -345,11 +407,6 @@ LOOP:
 
 			_, err = s.toDB.Exec(sql)
 			if err != nil {
-				rerr := txn.Rollback()
-				if rerr != nil {
-					return errors.Trace(err)
-				}
-
 				s.toDB = nil
 				continue LOOP
 			}
@@ -357,11 +414,6 @@ LOOP:
 
 		err = txn.Commit()
 		if err != nil {
-			rerr := txn.Rollback()
-			if rerr != nil {
-				return errors.Trace(err)
-			}
-
 			s.toDB = nil
 			continue
 		}
@@ -383,8 +435,8 @@ func (s *Syncer) isClosed() bool {
 
 // Close closes syncer.
 func (s *Syncer) Close() {
-	s.m.Lock()
-	defer s.m.Unlock()
+	s.Lock()
+	defer s.Unlock()
 
 	if s.isClosed() {
 		return

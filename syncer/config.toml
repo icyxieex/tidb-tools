@@ -4,8 +4,7 @@ log-level = "debug"
 
 server-id = 101
 
-file = ""
-pos = 4
+meta = "syncer.meta"
 
 batch = 1
 
