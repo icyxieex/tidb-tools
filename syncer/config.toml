@@ -1,6 +1,6 @@
 # Syncer Configuration.
 
-log-level = "debug"
+log-level = "info"
 
 server-id = 101
 

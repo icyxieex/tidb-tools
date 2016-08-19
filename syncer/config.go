@@ -35,7 +35,7 @@ func NewConfig() *Config {
 
 	fs.StringVar(&cfg.Meta, "meta", "syncer.meta", "syncer meta info")
 
-	fs.StringVar(&cfg.LogLevel, "L", "debug", "log level: debug, info, warn, error, fatal")
+	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
 	return cfg
 }
