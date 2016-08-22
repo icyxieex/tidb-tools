@@ -60,6 +60,7 @@ func NewLocalMeta(name string) *LocalMeta {
 	return &LocalMeta{name: name, BinLogPos: 4}
 }
 
+// Load implements Meta.Load interface.
 func (lm *LocalMeta) Load() error {
 	file, err := os.Open(lm.name)
 	if err != nil && !os.IsNotExist(errors.Cause(err)) {
@@ -74,6 +75,7 @@ func (lm *LocalMeta) Load() error {
 	return errors.Trace(err)
 }
 
+// Save implements Meta.Save interface.
 func (lm *LocalMeta) Save(pos mysql.Position, force bool) error {
 	lm.Lock()
 	defer lm.Unlock()
@@ -104,6 +106,7 @@ func (lm *LocalMeta) Save(pos mysql.Position, force bool) error {
 	return nil
 }
 
+// Pos implements Meta.Pos interface.
 func (lm *LocalMeta) Pos() mysql.Position {
 	lm.RLock()
 	defer lm.RUnlock()

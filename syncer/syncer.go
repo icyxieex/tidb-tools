@@ -287,14 +287,16 @@ func (s *Syncer) run() error {
 			forceSave = true
 			log.Infof("rotate binlog to %v", pos)
 		case *replication.RowsEvent:
-			table, err := s.getTable(string(ev.Table.Schema), string(ev.Table.Table))
+			table := &table{}
+			table, err = s.getTable(string(ev.Table.Schema), string(ev.Table.Table))
 			if err != nil {
 				return errors.Trace(err)
 			}
 
+			var sqls []string
 			switch e.Header.EventType {
 			case replication.WRITE_ROWS_EVENTv0, replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-				sqls, err := genInsertSQLs(table.schema, table.name, ev.Rows, table.columns)
+				sqls, err = genInsertSQLs(table.schema, table.name, ev.Rows, table.columns)
 				if err != nil {
 					return errors.Errorf("gen insert sqls failed: %v", err)
 				}
@@ -302,7 +304,7 @@ func (s *Syncer) run() error {
 				job := &job{tp: insert, sqls: sqls}
 				s.addJob(job)
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				sqls, err := genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, err = genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen update sqls failed: %v", err)
 				}
@@ -310,7 +312,7 @@ func (s *Syncer) run() error {
 				job := &job{tp: update, sqls: sqls}
 				s.addJob(job)
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				sqls, err := genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, err = genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
 					return errors.Errorf("gen delete sqls failed: %v", err)
 				}
@@ -319,8 +321,9 @@ func (s *Syncer) run() error {
 				s.addJob(job)
 			}
 		case *replication.QueryEvent:
+			ok := false
 			sql := string(ev.Query)
-			ok, err := isDDLSQL(sql)
+			ok, err = isDDLSQL(sql)
 			if err != nil {
 				return errors.Errorf("parse query event failed: %v", err)
 			}
@@ -332,6 +335,8 @@ func (s *Syncer) run() error {
 
 				job := &job{tp: ddl, sqls: []string{sql}, done: s.done}
 				s.addJob(job)
+
+				forceSave = true
 			}
 		}
 
