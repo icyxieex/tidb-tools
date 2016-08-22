@@ -48,8 +48,6 @@ type DBConfig struct {
 
 	Password string `toml:"password" json:"password"`
 
-	Name string `toml:"name" json:"name"`
-
 	Port int `toml:"port" json:"port"`
 }
 

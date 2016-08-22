@@ -31,6 +31,8 @@ var (
 	maxSaveTime = time.Second
 )
 
+// Meta is the binlog meta information from sync source.
+// When syncer restarts, we should reload meta info to guarantee continuous transmission.
 type Meta interface {
 	// Load loads meta information.
 	Load() error
