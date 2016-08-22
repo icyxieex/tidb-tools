@@ -131,6 +131,10 @@ func (s *Syncer) checkBinlogFormat() error {
 		}
 	}
 
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
 	return nil
 }
 
