@@ -28,13 +28,9 @@ func NewConfig() *Config {
 	fs := cfg.FlagSet
 
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
-
 	fs.IntVar(&cfg.ServerID, "server-id", 101, "MySQL slave server ID")
-
 	fs.Int64Var(&cfg.Batch, "b", 1, "batch commit count")
-
 	fs.StringVar(&cfg.Meta, "meta", "syncer.meta", "syncer meta info")
-
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
 	return cfg
