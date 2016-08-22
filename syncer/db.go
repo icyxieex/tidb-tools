@@ -225,6 +225,10 @@ func getTableColumns(db *sql.DB, table *table) error {
 		idx++
 	}
 
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
 	return nil
 }
 
@@ -287,6 +291,10 @@ func getTableIndex(db *sql.DB, table *table) error {
 
 			columns = append(columns, string(datas[4]))
 		}
+	}
+
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
 	}
 
 	table.indexColumns = findColumns(table.columns, columns)
