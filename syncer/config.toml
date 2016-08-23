@@ -1,0 +1,21 @@
+# Syncer Configuration.
+
+log-level = "info"
+
+server-id = 101
+
+meta = "syncer.meta"
+
+batch = 1
+
+[from]
+host = "127.0.0.1"
+user = "root"
+password = ""
+port = 3306
+
+[to]
+host = "127.0.0.1"
+user = "root"
+password = ""
+port = 4000
