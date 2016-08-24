@@ -1,0 +1,6 @@
+/vendor
+/bin
+*/*.iml
+*/.idea
+deps.sh
+syncer.meta

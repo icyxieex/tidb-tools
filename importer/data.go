@@ -83,7 +83,7 @@ func (d *datum) uniqFloat64() float64 {
 
 func (d *datum) uniqString(n int) string {
 	d.Lock()
-	d.intValue += 1
+	d.intValue++
 	data := d.intValue
 	d.Unlock()
 

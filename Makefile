@@ -1,16 +1,14 @@
 GO=GO15VENDOREXPERIMENT="1" go
 
-default: build
+.PHONY: build importer syncer test check deps
 
-all: dev install
+build: importer syncer check test
 
-dev: build check test
+importer:
+	$(GO) build -o bin/importer ./importer
 
-build: 
-	$(GO) build
-
-install: 
-	$(GO) install ./...
+syncer:
+	$(GO) build -o bin/syncer ./syncer
 
 test:
 

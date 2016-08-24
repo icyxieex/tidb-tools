@@ -139,4 +139,4 @@ Support Type [can only be used in none unique index]:
 tinyint | smallint | int | bigint | float | double | decimal.
 
 ## License
-Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
+Apache 2.0 license. See the [LICENSE](../LICENSE) file for details.
