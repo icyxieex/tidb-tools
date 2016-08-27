@@ -5,7 +5,7 @@ log-level = "info"
 server-id = 101
 
 meta = "syncer.meta"
-
+worker-count = 1
 batch = 1
 
 [from]

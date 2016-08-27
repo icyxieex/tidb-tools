@@ -16,14 +16,17 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"hash/crc32"
 	"reflect"
 	"strconv"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser"
+	gmysql "github.com/siddontang/go-mysql/mysql"
 )
 
 type opType byte
@@ -37,9 +40,10 @@ const (
 )
 
 type job struct {
-	tp   opType
-	sqls []string
-	done chan struct{}
+	tp  opType
+	sql string
+	key string
+	pos gmysql.Position
 }
 
 type column struct {
@@ -314,12 +318,26 @@ func genColumnList(columns []*column) string {
 	return string(columnList)
 }
 
-func genInsertSQLs(schema string, table string, datas [][]interface{}, columns []*column) ([]string, error) {
+func genHashKey(key string) uint32 {
+	return crc32.ChecksumIEEE([]byte(key))
+}
+
+func genKeyList(columns []*column, datas []interface{}) string {
+	values := make([]string, 0, len(datas))
+	for i, data := range datas {
+		values = append(values, columnValue(data, columns[i].unsigned))
+	}
+
+	return strings.Join(values, ",")
+}
+
+func genInsertSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, []string, error) {
 	sqls := make([]string, 0, len(datas))
+	keys := make([]string, 0, len(datas))
 	columnList := genColumnList(columns)
 	for _, data := range datas {
 		if len(data) != len(columns) {
-			return nil, errors.Errorf("invalid columns and datas - %d, %d", len(datas), len(columns))
+			return nil, nil, errors.Errorf("invalid columns and datas - %d, %d", len(datas), len(columns))
 		}
 
 		values := make([]string, 0, len(data))
@@ -330,9 +348,12 @@ func genInsertSQLs(schema string, table string, datas [][]interface{}, columns [
 		valueList := strings.Join(values, ",")
 		sql := fmt.Sprintf("replace into %s.%s (%s) values (%s);", schema, table, columnList, valueList)
 		sqls = append(sqls, sql)
+
+		keyColumns, keyValues := getColumnDatas(columns, indexColumns, data)
+		keys = append(keys, genKeyList(keyColumns, keyValues))
 	}
 
-	return sqls, nil
+	return sqls, keys, nil
 }
 
 func getColumnDatas(columns []*column, indexColumns []*column, data []interface{}) ([]*column, []interface{}) {
@@ -377,13 +398,14 @@ func genKVs(columns []*column, data []interface{}) string {
 	return string(kvs)
 }
 
-func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, error) {
+func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, []string, error) {
 	sqls := make([]string, 0, len(datas)/2)
+	keys := make([]string, 0, len(datas)/2)
 	for i := 0; i < len(datas); i += 2 {
 		oldData := datas[i]
 		newData := datas[i+1]
 		if len(oldData) != len(newData) {
-			return nil, errors.Errorf("invalid update datas - %d, %d", len(oldData), len(newData))
+			return nil, nil, errors.Errorf("invalid update datas - %d, %d", len(oldData), len(newData))
 		}
 
 		oldValues := make([]interface{}, 0, len(oldData))
@@ -410,16 +432,18 @@ func genUpdateSQLs(schema string, table string, datas [][]interface{}, columns [
 		where := genWhere(whereColumns, whereValues)
 		sql := fmt.Sprintf("update %s.%s set %s where %s limit 1;", schema, table, kvs, where)
 		sqls = append(sqls, sql)
+		keys = append(keys, genKeyList(whereColumns, whereValues))
 	}
 
-	return sqls, nil
+	return sqls, keys, nil
 }
 
-func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, error) {
+func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns []*column, indexColumns []*column) ([]string, []string, error) {
 	sqls := make([]string, 0, len(datas))
+	keys := make([]string, 0, len(datas))
 	for _, data := range datas {
 		if len(data) != len(columns) {
-			return nil, errors.Errorf("invalid columns and datas - %d, %d", len(datas), len(columns))
+			return nil, nil, errors.Errorf("invalid columns and datas - %d, %d", len(datas), len(columns))
 		}
 
 		values := make([]interface{}, 0, len(data))
@@ -435,9 +459,10 @@ func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns [
 		where := genWhere(whereColumns, whereValues)
 		sql := fmt.Sprintf("delete from %s.%s where %s limit 1;", schema, table, where)
 		sqls = append(sqls, sql)
+		keys = append(keys, genKeyList(whereColumns, whereValues))
 	}
 
-	return sqls, nil
+	return sqls, keys, nil
 }
 
 func isDDLSQL(sql string) (bool, error) {
@@ -480,4 +505,27 @@ func closeDB(db *sql.DB) error {
 	}
 
 	return errors.Trace(db.Close())
+}
+
+func createDBs(cfg DBConfig, count int) ([]*sql.DB, error) {
+	dbs := make([]*sql.DB, 0, count)
+	for i := 0; i < count; i++ {
+		db, err := createDB(cfg)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		dbs = append(dbs, db)
+	}
+
+	return dbs, nil
+}
+
+func closeDBs(dbs ...*sql.DB) {
+	for _, db := range dbs {
+		err := closeDB(db)
+		if err != nil {
+			log.Errorf("close db failed - %v", err)
+		}
+	}
 }
