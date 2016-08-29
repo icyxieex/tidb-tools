@@ -96,6 +96,12 @@ func newJobChans(count int) []chan *job {
 	return jobs
 }
 
+func closeJobChans(jobs []chan *job) {
+	for _, ch := range jobs {
+		close(ch)
+	}
+}
+
 // Start starts syncer.
 func (s *Syncer) Start() error {
 	err := s.meta.Load()
@@ -196,7 +202,7 @@ func (s *Syncer) checkWait(job *job) bool {
 func (s *Syncer) addJob(job *job) error {
 	s.jobWg.Add(1)
 
-	idx := int(genHashKey(job.key)) / s.cfg.WorkerCount
+	idx := int(genHashKey(job.key)) % s.cfg.WorkerCount
 	s.jobs[idx] <- job
 
 	wait := s.checkWait(job)
@@ -474,6 +480,8 @@ func (s *Syncer) Close() {
 	}
 
 	close(s.quit)
+
+	closeJobChans(s.jobs)
 
 	s.wg.Wait()
 
