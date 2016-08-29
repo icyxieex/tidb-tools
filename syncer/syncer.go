@@ -30,6 +30,7 @@ var (
 	maxRetryCount = 2
 
 	retryTimeout = time.Second
+	maxWaitTime  = 5 * time.Second
 	eventTimeout = 3 * time.Second
 	statusTime   = 30 * time.Second
 )
@@ -226,6 +227,7 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 	idx := 0
 	count := s.cfg.Batch
 	sqls := make([]string, 0, count)
+	lastSyncTime := time.Now()
 
 	var err error
 	for {
@@ -246,18 +248,23 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 
 				idx = 0
 				sqls = make([]string, 0, count)
+				lastSyncTime = time.Now()
 			}
 
 			s.addCount(job.tp)
 			s.jobWg.Done()
 		default:
-			err = s.executeSQL(db, sqls...)
-			if err != nil {
-				log.Fatalf(errors.ErrorStack(err))
-			}
+			now := time.Now()
+			if now.Sub(lastSyncTime) >= maxWaitTime {
+				err = s.executeSQL(db, sqls...)
+				if err != nil {
+					log.Fatalf(errors.ErrorStack(err))
+				}
 
-			idx = 0
-			sqls = make([]string, 0, count)
+				idx = 0
+				sqls = make([]string, 0, count)
+				lastSyncTime = now
+			}
 		}
 	}
 }
