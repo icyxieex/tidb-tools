@@ -8,6 +8,8 @@ meta = "syncer.meta"
 worker-count = 1
 batch = 1
 
+addr = ":10081"
+
 [from]
 host = "127.0.0.1"
 user = "root"

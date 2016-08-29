@@ -15,6 +15,8 @@ package main
 
 import (
 	"flag"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,6 +54,13 @@ func main() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
 		syncer.Close()
+	}()
+
+	go func() {
+		err := http.ListenAndServe(cfg.Addr, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}()
 
 	err = syncer.Start()
