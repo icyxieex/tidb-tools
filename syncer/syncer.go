@@ -116,6 +116,8 @@ func (s *Syncer) Start() error {
 		return errors.Trace(err)
 	}
 
+	s.done <- struct{}{}
+
 	return nil
 }
 
@@ -480,6 +482,8 @@ func (s *Syncer) Close() {
 	}
 
 	close(s.quit)
+
+	<-s.done
 
 	closeJobChans(s.jobs)
 
