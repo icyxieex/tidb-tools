@@ -57,7 +57,7 @@ func main() {
 	}()
 
 	go func() {
-		err := http.ListenAndServe(cfg.Addr, nil)
+		err := http.ListenAndServe(cfg.PprofAddr, nil)
 		if err != nil {
 			log.Fatal(err)
 		}
