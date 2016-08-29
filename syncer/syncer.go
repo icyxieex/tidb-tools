@@ -223,14 +223,42 @@ func (s *Syncer) addJob(job *job) error {
 func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 	defer s.wg.Done()
 
-	for job := range jobChan {
-		err := s.executeSQL(db, job.sql)
-		if err != nil {
-			log.Fatalf(errors.ErrorStack(err))
-		}
+	idx := 0
+	count := s.cfg.Batch
+	sqls := make([]string, 0, count)
 
-		s.addCount(job.tp)
-		s.jobWg.Done()
+	var err error
+	for {
+		select {
+		case job, ok := <-jobChan:
+			if !ok {
+				return
+			}
+
+			idx++
+			sqls = append(sqls, job.sql)
+
+			if idx >= count || job.tp == ddl {
+				err = s.executeSQL(db, sqls...)
+				if err != nil {
+					log.Fatalf(errors.ErrorStack(err))
+				}
+
+				idx = 0
+				sqls = make([]string, 0, count)
+			}
+
+			s.addCount(job.tp)
+			s.jobWg.Done()
+		default:
+			err = s.executeSQL(db, sqls...)
+			if err != nil {
+				log.Fatalf(errors.ErrorStack(err))
+			}
+
+			idx = 0
+			sqls = make([]string, 0, count)
+		}
 	}
 }
 
@@ -426,7 +454,7 @@ func (s *Syncer) executeSQL(db *sql.DB, sqls ...string) error {
 LOOP:
 	for i := 0; i < maxRetryCount; i++ {
 		if db == nil {
-			log.Debugf("execute sql retry %d - %v", i, sqls)
+			log.Warnf("execute sql retry %d - %v", i, sqls)
 			time.Sleep(retryTimeout)
 
 			db, err = createDB(s.cfg.To)
@@ -444,7 +472,7 @@ LOOP:
 		for _, sql := range sqls {
 			log.Debug(sql)
 
-			_, err = db.Exec(sql)
+			_, err = txn.Exec(sql)
 			if err != nil {
 				db = nil
 				continue LOOP

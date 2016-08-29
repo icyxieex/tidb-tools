@@ -30,7 +30,7 @@ func NewConfig() *Config {
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
 	fs.IntVar(&cfg.ServerID, "server-id", 101, "MySQL slave server ID")
 	fs.IntVar(&cfg.WorkerCount, "c", 1, "parallel worker count")
-	fs.Int64Var(&cfg.Batch, "b", 1, "batch commit count")
+	fs.IntVar(&cfg.Batch, "b", 1, "batch commit count")
 	fs.StringVar(&cfg.Addr, "addr", ":10081", "http addr")
 	fs.StringVar(&cfg.Meta, "meta", "syncer.meta", "syncer meta info")
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
@@ -68,7 +68,7 @@ type Config struct {
 
 	WorkerCount int `toml:"worker-count" json:"worker-count"`
 
-	Batch int64 `toml:"batch" json:"batch"`
+	Batch int `toml:"batch" json:"batch"`
 
 	Meta string `toml:"meta" json:"meta"`
 
