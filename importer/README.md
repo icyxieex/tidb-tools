@@ -2,13 +2,6 @@
 
 importer is a tool for generating and inserting datas to database which is compatible with MySQL protocol, like MySQL, TiDB.
 
-## How to build
-
-```
-make deps && sh deps.sh (optional, install golang dependent packages)
-make build
-```
-
 ## How to use
 
 ```
