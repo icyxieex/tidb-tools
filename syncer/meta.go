@@ -117,8 +117,7 @@ func (lm *LocalMeta) Check() bool {
 	lm.RLock()
 	defer lm.RUnlock()
 
-	now := time.Now()
-	if now.Sub(lm.saveTime) >= maxSaveTime {
+	if time.Since(lm.saveTime) >= maxSaveTime {
 		return true
 	}
 
