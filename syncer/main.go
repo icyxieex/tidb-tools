@@ -39,6 +39,17 @@ func main() {
 
 	log.SetLevelByString(cfg.LogLevel)
 
+	if len(cfg.LogFile) > 0 {
+		log.SetOutputByName(cfg.LogFile)
+		log.SetHighlighting(false)
+
+		if cfg.LogRotate == "hour" {
+			log.SetRotateByHour()
+		} else {
+			log.SetRotateByDay()
+		}
+	}
+
 	log.Infof("%v", cfg)
 
 	syncer := NewSyncer(cfg)

@@ -16,6 +16,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,7 +31,8 @@ var (
 	maxRetryCount = 2
 
 	retryTimeout = time.Second
-	maxWaitTime  = 5 * time.Second
+	waitTime     = 10 * time.Millisecond
+	maxWaitTime  = 3 * time.Second
 	eventTimeout = 3 * time.Second
 	statusTime   = 30 * time.Second
 )
@@ -157,6 +159,10 @@ func (s *Syncer) checkBinlogFormat() error {
 	return nil
 }
 
+func (s *Syncer) clearTables() {
+	s.tables = make(map[string]*table)
+}
+
 func (s *Syncer) getTable(schema string, table string) (*table, error) {
 	key := fmt.Sprintf("%s.%s", schema, table)
 
@@ -227,6 +233,7 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 	idx := 0
 	count := s.cfg.Batch
 	sqls := make([]string, 0, count)
+	args := make([][]interface{}, 0, count)
 	lastSyncTime := time.Now()
 
 	var err error
@@ -239,15 +246,17 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 
 			idx++
 			sqls = append(sqls, job.sql)
+			args = append(args, job.args)
 
 			if idx >= count || job.tp == ddl {
-				err = s.executeSQL(db, sqls...)
+				err = s.executeSQL(db, sqls, args)
 				if err != nil {
 					log.Fatalf(errors.ErrorStack(err))
 				}
 
 				idx = 0
 				sqls = make([]string, 0, count)
+				args = make([][]interface{}, 0, count)
 				lastSyncTime = time.Now()
 			}
 
@@ -256,17 +265,34 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 		default:
 			now := time.Now()
 			if now.Sub(lastSyncTime) >= maxWaitTime {
-				err = s.executeSQL(db, sqls...)
+				err = s.executeSQL(db, sqls, args)
 				if err != nil {
 					log.Fatalf(errors.ErrorStack(err))
 				}
 
 				idx = 0
 				sqls = make([]string, 0, count)
+				args = make([][]interface{}, 0, count)
 				lastSyncTime = now
 			}
+
+			time.Sleep(waitTime)
 		}
 	}
+}
+
+func (s *Syncer) skip(sql string) bool {
+	sql = strings.ToUpper(sql)
+
+	if strings.HasPrefix(sql, "GRANT REPLICATION SLAVE ON") {
+		return true
+	}
+
+	if strings.HasPrefix(sql, "FLUSH PRIVILEGES") {
+		return true
+	}
+
+	return false
 }
 
 func (s *Syncer) run() error {
@@ -328,8 +354,6 @@ func (s *Syncer) run() error {
 			continue
 		}
 
-		pos.Pos = e.Header.LogPos
-
 		switch ev := e.Event.(type) {
 		case *replication.RotateEvent:
 			pos.Name = string(ev.NextLogName)
@@ -351,42 +375,43 @@ func (s *Syncer) run() error {
 			var (
 				sqls []string
 				keys []string
+				args [][]interface{}
 			)
 			switch e.Header.EventType {
 			case replication.WRITE_ROWS_EVENTv0, replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-				sqls, keys, err = genInsertSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, keys, args, err = genInsertSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen insert sqls failed: %v", err)
+					return errors.Errorf("gen insert sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
 				for i := range sqls {
-					job := &job{tp: insert, sql: sqls[i], key: keys[i], pos: pos}
+					job := newJob(insert, sqls[i], args[i], keys[i], pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				sqls, keys, err = genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, keys, args, err = genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen update sqls failed: %v", err)
+					return errors.Errorf("gen update sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
 				for i := range sqls {
-					job := &job{tp: insert, sql: sqls[i], key: keys[i], pos: pos}
+					job := newJob(update, sqls[i], args[i], keys[i], pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				sqls, keys, err = genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, keys, args, err = genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen delete sqls failed: %v", err)
+					return errors.Errorf("gen delete sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
 				for i := range sqls {
-					job := &job{tp: insert, sql: sqls[i], key: keys[i], pos: pos}
+					job := newJob(del, sqls[i], args[i], keys[i], pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -396,22 +421,37 @@ func (s *Syncer) run() error {
 		case *replication.QueryEvent:
 			ok := false
 			sql := string(ev.Query)
+			if s.skip(sql) {
+				log.Warnf("[skip sql]%s", sql)
+				continue
+			}
+
+			log.Debugf("[query]%s", sql)
+
 			ok, err = isDDLSQL(sql)
 			if err != nil {
 				return errors.Errorf("parse query event failed: %v", err)
 			}
 			if ok {
+				pos.Pos = e.Header.LogPos
+
 				sql, err = genDDLSQL(sql, string(ev.Schema))
 				if err != nil {
 					return errors.Trace(err)
 				}
 
-				job := &job{tp: ddl, sql: sql, pos: pos}
+				log.Infof("[ddl]%s", sql)
+
+				job := newJob(ddl, sql, nil, "", pos)
 				err = s.addJob(job)
 				if err != nil {
 					return errors.Trace(err)
 				}
+
+				s.clearTables()
 			}
+		case *replication.XIDEvent:
+			pos.Pos = e.Header.LogPos
 		}
 	}
 }
@@ -439,7 +479,7 @@ func (s *Syncer) printStatus() {
 				totalTps = total / totalSeconds
 			}
 
-			log.Infof("[syncer]total events = %d , insert = %d, update = %d, delete = %d, total tps = %d, recent tps = %d, %s.",
+			log.Infof("[syncer]total events = %d, insert = %d, update = %d, delete = %d, total tps = %d, recent tps = %d, %s.",
 				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, tps, s.meta)
 
 			s.lastCount.Set(total)
@@ -448,7 +488,7 @@ func (s *Syncer) printStatus() {
 	}
 }
 
-func (s *Syncer) executeSQL(db *sql.DB, sqls ...string) error {
+func (s *Syncer) executeSQL(db *sql.DB, sqls []string, args [][]interface{}) error {
 	if len(sqls) == 0 {
 		return nil
 	}
@@ -476,10 +516,9 @@ LOOP:
 			continue
 		}
 
-		for _, sql := range sqls {
-			log.Debug(sql)
-
-			_, err = txn.Exec(sql)
+		for i := range sqls {
+			log.Debugf("[exec][sql]%s[args]%v", sqls[i], args[i])
+			_, err = txn.Exec(sqls[i], args[i]...)
 			if err != nil {
 				db = nil
 				continue LOOP
