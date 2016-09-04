@@ -28,9 +28,9 @@ import (
 )
 
 var (
-	maxRetryCount = 2
+	maxRetryCount = 100
 
-	retryTimeout = time.Second
+	retryTimeout = 3 * time.Second
 	waitTime     = 10 * time.Millisecond
 	maxWaitTime  = 3 * time.Second
 	eventTimeout = 3 * time.Second
@@ -163,6 +163,158 @@ func (s *Syncer) clearTables() {
 	s.tables = make(map[string]*table)
 }
 
+func (s *Syncer) getTableFromDB(db *sql.DB, schema string, name string) (*table, error) {
+	table := &table{}
+	table.schema = schema
+	table.name = name
+
+	err := s.getTableColumns(db, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = s.getTableIndex(db, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(table.columns) == 0 {
+		return nil, errors.Errorf("invalid table %s.%s", schema, name)
+	}
+
+	return table, nil
+}
+
+func (s *Syncer) getTableColumns(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
+	}
+
+	query := fmt.Sprintf("show columns from %s.%s", table.schema, table.name)
+	rows, err := querySQL(db, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	rowColumns, err := rows.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Show an example.
+	/*
+	   mysql> show columns from test.t;
+	   +-------+---------+------+-----+---------+-------+
+	   | Field | Type    | Null | Key | Default | Extra |
+	   +-------+---------+------+-----+---------+-------+
+	   | a     | int(11) | NO   | PRI | NULL    |       |
+	   | b     | int(11) | NO   | PRI | NULL    |       |
+	   | c     | int(11) | YES  | MUL | NULL    |       |
+	   | d     | int(11) | YES  |     | NULL    |       |
+	   +-------+---------+------+-----+---------+-------+
+	*/
+
+	idx := 0
+	for rows.Next() {
+		datas := make([]sql.RawBytes, len(rowColumns))
+		values := make([]interface{}, len(rowColumns))
+
+		for i := range values {
+			values[i] = &datas[i]
+		}
+
+		err = rows.Scan(values...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		column := &column{}
+		column.idx = idx
+		column.name = string(datas[0])
+
+		// Check whether column has unsigned flag.
+		if strings.Contains(strings.ToLower(string(datas[1])), "unsigned") {
+			column.unsigned = true
+		}
+
+		table.columns = append(table.columns, column)
+		idx++
+	}
+
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
+	return nil
+}
+
+func (s *Syncer) getTableIndex(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
+	}
+
+	query := fmt.Sprintf("show index from %s.%s", table.schema, table.name)
+	rows, err := querySQL(db, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	rowColumns, err := rows.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Show an example.
+	/*
+		mysql> show index from test.t;
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+		| Table | Non_unique | Key_name | Seq_in_index | Column_name | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+		| t     |          0 | PRIMARY  |            1 | a           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
+		| t     |          0 | PRIMARY  |            2 | b           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
+		| t     |          0 | ucd      |            1 | c           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
+		| t     |          0 | ucd      |            2 | d           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+	*/
+	var keyName string
+	var columns []string
+	for rows.Next() {
+		datas := make([]sql.RawBytes, len(rowColumns))
+		values := make([]interface{}, len(rowColumns))
+
+		for i := range values {
+			values[i] = &datas[i]
+		}
+
+		err = rows.Scan(values...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		nonUnique := string(datas[1])
+		if nonUnique == "0" {
+			if keyName == "" {
+				keyName = string(datas[2])
+			} else {
+				if keyName != string(datas[2]) {
+					break
+				}
+			}
+
+			columns = append(columns, string(datas[4]))
+		}
+	}
+
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
+	table.indexColumns = findColumns(table.columns, columns)
+	return nil
+}
+
 func (s *Syncer) getTable(schema string, table string) (*table, error) {
 	key := fmt.Sprintf("%s.%s", schema, table)
 
@@ -172,7 +324,7 @@ func (s *Syncer) getTable(schema string, table string) (*table, error) {
 	}
 
 	db := s.toDBs[len(s.toDBs)-1]
-	t, err := getTable(db, schema, table)
+	t, err := s.getTableFromDB(db, schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -249,7 +401,9 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 			args = append(args, job.args)
 
 			if idx >= count || job.tp == ddl {
-				err = s.executeSQL(db, sqls, args)
+				// For ddl sql, we will not use retry.
+				retry := job.tp != ddl
+				err = executeSQL(db, sqls, args, retry)
 				if err != nil {
 					log.Fatalf(errors.ErrorStack(err))
 				}
@@ -265,7 +419,7 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 		default:
 			now := time.Now()
 			if now.Sub(lastSyncTime) >= maxWaitTime {
-				err = s.executeSQL(db, sqls, args)
+				err = executeSQL(db, sqls, args, true)
 				if err != nil {
 					log.Fatalf(errors.ErrorStack(err))
 				}
@@ -385,7 +539,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(insert, sqls[i], args[i], keys[i], pos)
+					job := newJob(insert, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -398,7 +552,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(update, sqls[i], args[i], keys[i], pos)
+					job := newJob(update, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -411,7 +565,7 @@ func (s *Syncer) run() error {
 				}
 
 				for i := range sqls {
-					job := newJob(del, sqls[i], args[i], keys[i], pos)
+					job := newJob(del, sqls[i], args[i], keys[i], true, pos)
 					err = s.addJob(job)
 					if err != nil {
 						return errors.Trace(err)
@@ -440,13 +594,15 @@ func (s *Syncer) run() error {
 					return errors.Trace(err)
 				}
 
-				log.Infof("[ddl]%s", sql)
+				log.Infof("[ddl][start]%s[next pos]%v", sql, pos)
 
-				job := newJob(ddl, sql, nil, "", pos)
+				job := newJob(ddl, sql, nil, "", false, pos)
 				err = s.addJob(job)
 				if err != nil {
 					return errors.Trace(err)
 				}
+
+				log.Infof("[ddl][end]%s[next pos]%v", sql, pos)
 
 				s.clearTables()
 			}
@@ -486,60 +642,6 @@ func (s *Syncer) printStatus() {
 			s.lastTime = time.Now()
 		}
 	}
-}
-
-func (s *Syncer) executeSQL(db *sql.DB, sqls []string, args [][]interface{}) error {
-	if len(sqls) == 0 {
-		return nil
-	}
-
-	var (
-		err error
-		txn *sql.Tx
-	)
-
-LOOP:
-	for i := 0; i < maxRetryCount; i++ {
-		if db == nil {
-			log.Warnf("execute sql retry %d - %v", i, sqls)
-			time.Sleep(retryTimeout)
-
-			db, err = createDB(s.cfg.To)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		txn, err = db.Begin()
-		if err != nil {
-			db = nil
-			continue
-		}
-
-		for i := range sqls {
-			log.Debugf("[exec][sql]%s[args]%v", sqls[i], args[i])
-			_, err = txn.Exec(sqls[i], args[i]...)
-			if err != nil {
-				db = nil
-				continue LOOP
-			}
-		}
-
-		err = txn.Commit()
-		if err != nil {
-			db = nil
-			continue
-		}
-
-		return nil
-	}
-
-	if err != nil {
-		log.Errorf("execute sqls[%v] failed %v", sqls, errors.ErrorStack(err))
-		return errors.Trace(err)
-	}
-
-	return nil
 }
 
 func (s *Syncer) isClosed() bool {

@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
@@ -32,23 +33,23 @@ import (
 type opType byte
 
 const (
-	unknown opType = iota
-	insert
+	insert = iota + 1
 	update
 	del
 	ddl
 )
 
 type job struct {
-	tp   opType
-	sql  string
-	args []interface{}
-	key  string
-	pos  gmysql.Position
+	tp    opType
+	sql   string
+	args  []interface{}
+	key   string
+	retry bool
+	pos   gmysql.Position
 }
 
-func newJob(tp opType, sql string, args []interface{}, key string, pos gmysql.Position) *job {
-	return &job{tp: tp, sql: sql, args: args, key: key, pos: pos}
+func newJob(tp opType, sql string, args []interface{}, key string, retry bool, pos gmysql.Position) *job {
+	return &job{tp: tp, sql: sql, args: args, key: key, retry: retry, pos: pos}
 }
 
 type column struct {
@@ -153,164 +154,6 @@ func findColumns(columns []*column, indexColumns []string) []*column {
 	}
 
 	return result
-}
-
-func getTable(db *sql.DB, schema string, name string) (*table, error) {
-	table := &table{}
-	table.schema = schema
-	table.name = name
-
-	err := getTableColumns(db, table)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	err = getTableIndex(db, table)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if len(table.columns) == 0 {
-		return nil, errors.Errorf("invalid table %s.%s", schema, name)
-	}
-
-	return table, nil
-}
-
-func getTableColumns(db *sql.DB, table *table) error {
-	if table.schema == "" || table.name == "" {
-		return errors.New("schema/table is empty")
-	}
-	if db == nil {
-		return errors.New("invalid db conn")
-	}
-
-	querySQL := fmt.Sprintf("show columns from %s.%s", table.schema, table.name)
-	rows, err := db.Query(querySQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer rows.Close()
-
-	rowColumns, err := rows.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Show an example.
-	/*
-	   mysql> show columns from test.t;
-	   +-------+---------+------+-----+---------+-------+
-	   | Field | Type    | Null | Key | Default | Extra |
-	   +-------+---------+------+-----+---------+-------+
-	   | a     | int(11) | NO   | PRI | NULL    |       |
-	   | b     | int(11) | NO   | PRI | NULL    |       |
-	   | c     | int(11) | YES  | MUL | NULL    |       |
-	   | d     | int(11) | YES  |     | NULL    |       |
-	   +-------+---------+------+-----+---------+-------+
-	*/
-
-	idx := 0
-	for rows.Next() {
-		datas := make([]sql.RawBytes, len(rowColumns))
-		values := make([]interface{}, len(rowColumns))
-
-		for i := range values {
-			values[i] = &datas[i]
-		}
-
-		err = rows.Scan(values...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		column := &column{}
-		column.idx = idx
-		column.name = string(datas[0])
-
-		// Check whether column has unsigned flag.
-		if strings.Contains(strings.ToLower(string(datas[1])), "unsigned") {
-			column.unsigned = true
-		}
-
-		table.columns = append(table.columns, column)
-		idx++
-	}
-
-	if rows.Err() != nil {
-		return errors.Trace(rows.Err())
-	}
-
-	return nil
-}
-
-func getTableIndex(db *sql.DB, table *table) error {
-	if table.schema == "" || table.name == "" {
-		return errors.New("schema/table is empty")
-	}
-	if db == nil {
-		return errors.New("invalid db conn")
-	}
-
-	querySQL := fmt.Sprintf("show index from %s.%s", table.schema, table.name)
-	rows, err := db.Query(querySQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer rows.Close()
-
-	rowColumns, err := rows.Columns()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Show an example.
-	/*
-		mysql> show index from test.t;
-		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
-		| Table | Non_unique | Key_name | Seq_in_index | Column_name | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |
-		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
-		| t     |          0 | PRIMARY  |            1 | a           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
-		| t     |          0 | PRIMARY  |            2 | b           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
-		| t     |          0 | ucd      |            1 | c           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
-		| t     |          0 | ucd      |            2 | d           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
-		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
-	*/
-	var keyName string
-	var columns []string
-	for rows.Next() {
-		datas := make([]sql.RawBytes, len(rowColumns))
-		values := make([]interface{}, len(rowColumns))
-
-		for i := range values {
-			values[i] = &datas[i]
-		}
-
-		err = rows.Scan(values...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		nonUnique := string(datas[1])
-		if nonUnique == "0" {
-			if keyName == "" {
-				keyName = string(datas[2])
-			} else {
-				if keyName != string(datas[2]) {
-					break
-				}
-			}
-
-			columns = append(columns, string(datas[4]))
-		}
-	}
-
-	if rows.Err() != nil {
-		return errors.Trace(rows.Err())
-	}
-
-	table.indexColumns = findColumns(table.columns, columns)
-	return nil
 }
 
 func genColumnList(columns []*column) string {
@@ -519,6 +362,96 @@ func genDDLSQL(sql string, schema string) (string, error) {
 	}
 
 	return fmt.Sprintf("use %s; %s;", schema, sql), nil
+}
+
+func querySQL(db *sql.DB, query string) (*sql.Rows, error) {
+	var (
+		err  error
+		rows *sql.Rows
+	)
+
+	for i := 0; i < maxRetryCount; i++ {
+		if i > 0 {
+			log.Warnf("query sql retry %d - %s", i, query)
+			time.Sleep(retryTimeout)
+		}
+
+		log.Debugf("[query][sql]%s", query)
+
+		rows, err = db.Query(query)
+		if err != nil {
+			log.Warnf("[query][sql]%s[error]%v", query, err)
+			continue
+		}
+
+		return rows, nil
+	}
+
+	if err != nil {
+		log.Errorf("query sql[%s] failed %v", query, errors.ErrorStack(err))
+		return nil, errors.Trace(err)
+	}
+
+	return nil, errors.Errorf("query sql[%s] failed", query)
+}
+
+func executeSQL(db *sql.DB, sqls []string, args [][]interface{}, retry bool) error {
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	var (
+		err error
+		txn *sql.Tx
+	)
+
+	retryCount := 1
+	if retry {
+		retryCount = maxRetryCount
+	}
+
+LOOP:
+	for i := 0; i < retryCount; i++ {
+		if i > 0 {
+			log.Warnf("exec sql retry %d - %v - %v", i, sqls, args)
+			time.Sleep(retryTimeout)
+		}
+
+		txn, err = db.Begin()
+		if err != nil {
+			log.Errorf("exec sqls[%v] begin failed %v", sqls, errors.ErrorStack(err))
+			continue
+		}
+
+		for i := range sqls {
+			log.Debugf("[exec][sql]%s[args]%v", sqls[i], args[i])
+
+			_, err = txn.Exec(sqls[i], args[i]...)
+			if err != nil {
+				log.Warnf("[exec][sql]%s[args]%v[error]%v", sqls[i], args[i], err)
+				err = txn.Rollback()
+				if err != nil {
+					log.Errorf("[exec][sql]%s[args]%v[error]%v", sqls[i], args[i], err)
+				}
+				continue LOOP
+			}
+		}
+
+		err = txn.Commit()
+		if err != nil {
+			log.Errorf("exec sqls[%v] commit failed %v", sqls, errors.ErrorStack(err))
+			continue
+		}
+
+		return nil
+	}
+
+	if err != nil {
+		log.Errorf("exec sqls[%v] failed %v", sqls, errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+
+	return errors.Errorf("exec sqls[%v] failed", sqls)
 }
 
 func createDB(cfg DBConfig) (*sql.DB, error) {
