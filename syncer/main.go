@@ -68,9 +68,9 @@ func main() {
 	}()
 
 	go func() {
-		err := http.ListenAndServe(cfg.PprofAddr, nil)
-		if err != nil {
-			log.Fatal(err)
+		err1 := http.ListenAndServe(cfg.PprofAddr, nil)
+		if err1 != nil {
+			log.Fatal(err1)
 		}
 	}()
 

@@ -20,9 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go/sync2"
 )
@@ -55,7 +56,6 @@ type Syncer struct {
 	fromDB *sql.DB
 	toDBs  []*sql.DB
 
-	quit chan struct{}
 	done chan struct{}
 	jobs []chan *job
 
@@ -70,6 +70,9 @@ type Syncer struct {
 	deleteCount sync2.AtomicInt64
 	lastCount   sync2.AtomicInt64
 	count       sync2.AtomicInt64
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewSyncer creates a new Syncer.
@@ -83,10 +86,10 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer.insertCount.Set(0)
 	syncer.updateCount.Set(0)
 	syncer.deleteCount.Set(0)
-	syncer.quit = make(chan struct{})
 	syncer.done = make(chan struct{})
 	syncer.jobs = newJobChans(cfg.WorkerCount)
 	syncer.tables = make(map[string]*table)
+	syncer.ctx, syncer.cancel = context.WithCancel(context.Background())
 	return syncer
 }
 
@@ -452,12 +455,18 @@ func (s *Syncer) skip(sql string) bool {
 func (s *Syncer) run() error {
 	defer s.wg.Done()
 
-	s.syncer = replication.NewBinlogSyncer(uint32(s.cfg.ServerID), "mysql")
-	err := s.syncer.RegisterSlave(s.cfg.From.Host, uint16(s.cfg.From.Port), s.cfg.From.User, s.cfg.From.Password)
-	if err != nil {
-		return errors.Trace(err)
+	cfg := replication.BinlogSyncerConfig{
+		ServerID: uint32(s.cfg.ServerID),
+		Flavor:   "mysql",
+		Host:     s.cfg.From.Host,
+		Port:     uint16(s.cfg.From.Port),
+		User:     s.cfg.From.User,
+		Password: s.cfg.From.Password,
 	}
 
+	s.syncer = replication.NewBinlogSyncer(&cfg)
+
+	var err error
 	s.fromDB, err = createDB(s.cfg.From)
 	if err != nil {
 		return errors.Trace(err)
@@ -492,20 +501,19 @@ func (s *Syncer) run() error {
 	pos := s.meta.Pos()
 
 	for {
-		e, err := streamer.GetEventTimeout(eventTimeout)
-		if err != nil && !mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
-			return errors.Trace(err)
-		}
+		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
+		e, err := streamer.GetEvent(ctx)
+		cancel()
 
-		select {
-		case <-s.quit:
+		if ctx.Err() == context.Canceled {
 			log.Infof("ready to quit! [%v]", pos)
 			return nil
-		default:
+		} else if ctx.Err() == context.DeadlineExceeded {
+			continue
 		}
 
-		if mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
-			continue
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		switch ev := e.Event.(type) {
@@ -620,7 +628,7 @@ func (s *Syncer) printStatus() {
 
 	for {
 		select {
-		case <-s.quit:
+		case <-s.ctx.Done():
 			return
 		case <-timer.C:
 			now := time.Now()
@@ -657,7 +665,7 @@ func (s *Syncer) Close() {
 		return
 	}
 
-	close(s.quit)
+	s.cancel()
 
 	<-s.done
 
