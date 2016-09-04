@@ -505,10 +505,10 @@ func (s *Syncer) run() error {
 		e, err := streamer.GetEvent(ctx)
 		cancel()
 
-		if ctx.Err() == context.Canceled {
+		if err == context.Canceled {
 			log.Infof("ready to quit! [%v]", pos)
 			return nil
-		} else if ctx.Err() == context.DeadlineExceeded {
+		} else if err == context.DeadlineExceeded {
 			continue
 		}
 
