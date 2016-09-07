@@ -400,20 +400,38 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 			}
 
 			idx++
-			sqls = append(sqls, job.sql)
-			args = append(args, job.args)
 
-			if idx >= count || job.tp == ddl {
-				// For ddl sql, we will not use retry.
-				retry := job.tp != ddl
-				err = executeSQL(db, sqls, args, retry)
+			if job.tp == ddl {
+				err = executeSQL(db, sqls, args, true)
+				if err != nil {
+					log.Fatalf(errors.ErrorStack(err))
+				}
+
+				err = executeSQL(db, []string{job.sql}, [][]interface{}{job.args}, false)
+				if !ignoreDDLError(err) {
+					log.Fatalf(errors.ErrorStack(err))
+				} else {
+					log.Warnf("[ignore ddl error][sql]%s[args]%v[error]%v", job.sql, job.args, err)
+				}
+
+				idx = 0
+				sqls = sqls[0:0]
+				args = args[0:0]
+				lastSyncTime = time.Now()
+			} else {
+				sqls = append(sqls, job.sql)
+				args = append(args, job.args)
+			}
+
+			if idx >= count {
+				err = executeSQL(db, sqls, args, true)
 				if err != nil {
 					log.Fatalf(errors.ErrorStack(err))
 				}
 
 				idx = 0
-				sqls = make([]string, 0, count)
-				args = make([][]interface{}, 0, count)
+				sqls = sqls[0:0]
+				args = args[0:0]
 				lastSyncTime = time.Now()
 			}
 
@@ -428,8 +446,8 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 				}
 
 				idx = 0
-				sqls = make([]string, 0, count)
-				args = make([][]interface{}, 0, count)
+				sqls = sqls[0:0]
+				args = args[0:0]
 				lastSyncTime = now
 			}
 
@@ -595,6 +613,7 @@ func (s *Syncer) run() error {
 				return errors.Errorf("parse query event failed: %v", err)
 			}
 			if ok {
+				lastPos := pos
 				pos.Pos = e.Header.LogPos
 
 				sql, err = genDDLSQL(sql, string(ev.Schema))
@@ -602,7 +621,7 @@ func (s *Syncer) run() error {
 					return errors.Trace(err)
 				}
 
-				log.Infof("[ddl][start]%s[next pos]%v", sql, pos)
+				log.Infof("[ddl][start]%s[pos]%v[next pos]%v", sql, lastPos, pos)
 
 				job := newJob(ddl, sql, nil, "", false, pos)
 				err = s.addJob(job)
@@ -610,7 +629,7 @@ func (s *Syncer) run() error {
 					return errors.Trace(err)
 				}
 
-				log.Infof("[ddl][end]%s[next pos]%v", sql, pos)
+				log.Infof("[ddl][end]%s[pos]%v[next pos]%v", sql, lastPos, pos)
 
 				s.clearTables()
 			}

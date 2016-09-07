@@ -22,11 +22,14 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	tddl "github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/terror"
 	gmysql "github.com/siddontang/go-mysql/mysql"
 )
 
@@ -340,6 +343,28 @@ func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns [
 	return sqls, keys, values, nil
 }
 
+func ignoreDDLError(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError)
+	if !ok {
+		return false
+	}
+
+	errCode := terror.ErrCode(mysqlErr.Number)
+	switch errCode {
+	case infoschema.ErrDatabaseExists.Code(), infoschema.ErrDatabaseNotExists.Code(), infoschema.ErrDatabaseDropExists.Code(),
+		infoschema.ErrTableExists.Code(), infoschema.ErrTableNotExists.Code(), infoschema.ErrTableDropExists.Code(),
+		infoschema.ErrColumnExists.Code(), infoschema.ErrColumnNotExists.Code(),
+		infoschema.ErrIndexExists.Code(), tddl.ErrCantDropFieldOrKey.Code():
+		return true
+	default:
+		return false
+	}
+}
+
 func isDDLSQL(sql string) (bool, error) {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
@@ -429,9 +454,9 @@ LOOP:
 			_, err = txn.Exec(sqls[i], args[i]...)
 			if err != nil {
 				log.Warnf("[exec][sql]%s[args]%v[error]%v", sqls[i], args[i], err)
-				err = txn.Rollback()
-				if err != nil {
-					log.Errorf("[exec][sql]%s[args]%v[error]%v", sqls[i], args[i], err)
+				rerr := txn.Rollback()
+				if rerr != nil {
+					log.Errorf("[exec][sql]%s[args]%v[error]%v", sqls[i], args[i], rerr)
 				}
 				continue LOOP
 			}
