@@ -6,7 +6,6 @@ tidb-tools are some useful tool collections for [TiDB](https://github.com/pingca
 ## How to build
 
 ```
-make deps && sh deps.sh (optional, install golang dependent packages)
 make build
 ```
 
