@@ -5,8 +5,10 @@ log-level = "info"
 server-id = 101
 
 meta = "syncer.meta"
-
+worker-count = 1
 batch = 1
+
+pprof-addr = ":10081"
 
 [from]
 host = "127.0.0.1"

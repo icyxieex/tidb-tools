@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	maxSaveTime = time.Second
+	maxSaveTime = 30 * time.Second
 )
 
 // Meta is the binlog meta information from sync source.
@@ -38,7 +38,10 @@ type Meta interface {
 	Load() error
 
 	// Save saves meta information.
-	Save(pos mysql.Position, force bool) error
+	Save(pos mysql.Position) error
+
+	// Check checks whether we should save meta.
+	Check() bool
 
 	// Pos gets position information.
 	Pos() mysql.Position
@@ -76,14 +79,9 @@ func (lm *LocalMeta) Load() error {
 }
 
 // Save implements Meta.Save interface.
-func (lm *LocalMeta) Save(pos mysql.Position, force bool) error {
+func (lm *LocalMeta) Save(pos mysql.Position) error {
 	lm.Lock()
 	defer lm.Unlock()
-
-	now := time.Now()
-	if !force && now.Sub(lm.saveTime) < maxSaveTime {
-		return nil
-	}
 
 	lm.BinLogName = pos.Name
 	lm.BinLogPos = pos.Pos
@@ -102,7 +100,7 @@ func (lm *LocalMeta) Save(pos mysql.Position, force bool) error {
 		return errors.Trace(err)
 	}
 
-	lm.saveTime = now
+	lm.saveTime = time.Now()
 	return nil
 }
 
@@ -112,6 +110,18 @@ func (lm *LocalMeta) Pos() mysql.Position {
 	defer lm.RUnlock()
 
 	return mysql.Position{Name: lm.BinLogName, Pos: lm.BinLogPos}
+}
+
+// Check implements Meta.Check interface.
+func (lm *LocalMeta) Check() bool {
+	lm.RLock()
+	defer lm.RUnlock()
+
+	if time.Since(lm.saveTime) >= maxSaveTime {
+		return true
+	}
+
+	return false
 }
 
 func (lm *LocalMeta) String() string {

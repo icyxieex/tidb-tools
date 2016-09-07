@@ -2,13 +2,6 @@
 
 syncer is a tool for syncing source database data to target database which is compatible with MySQL protocol, like MySQL, TiDB.
 
-## How to build
-
-```
-make deps && sh deps.sh (optional, install golang dependent packages)
-make build
-```
-
 ## How to use
 
 ```
@@ -21,6 +14,8 @@ Usage of syncer:
         Config file
   -meta string
         syncer meta info (default "syncer.meta")
+  -pprof-addr string
+        pprof addr (default ":10081")
   -server-id int
         MySQL slave server ID (default 101)
 ```
@@ -36,8 +31,14 @@ server-id = 101
 // meta for binlog savepoint
 meta = "syncer.meta"
 
+// parallel db worker count
+worker-count = 1
+
 // batch commit count
 batch = 1
+
+// pprof addr
+pprof-addr = ":10081"
 
 // from MySQL config
 [from]
@@ -45,7 +46,6 @@ host = "127.0.0.1"
 user = "root"
 password = ""
 port = 3306
-name = "test"
 
 // to TiDB config
 [to]
@@ -53,13 +53,12 @@ host = "127.0.0.1"
 user = "root"
 password = ""
 port = 4000
-name = "test"
 ```
 
 ## Example
 
 ```
-./syncer -config=config.toml
+./bin/syncer -config=syncer/config.toml
 ```
 
 ## License

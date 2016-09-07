@@ -15,6 +15,8 @@ package main
 
 import (
 	"flag"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -37,6 +39,17 @@ func main() {
 
 	log.SetLevelByString(cfg.LogLevel)
 
+	if len(cfg.LogFile) > 0 {
+		log.SetOutputByName(cfg.LogFile)
+		log.SetHighlighting(false)
+
+		if cfg.LogRotate == "hour" {
+			log.SetRotateByHour()
+		} else {
+			log.SetRotateByDay()
+		}
+	}
+
 	log.Infof("%v", cfg)
 
 	syncer := NewSyncer(cfg)
@@ -52,6 +65,13 @@ func main() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
 		syncer.Close()
+	}()
+
+	go func() {
+		err1 := http.ListenAndServe(cfg.PprofAddr, nil)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
 	}()
 
 	err = syncer.Start()
