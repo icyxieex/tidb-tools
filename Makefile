@@ -20,8 +20,14 @@ check:
 	golint ./... 2>&1 | grep -vE 'vendor' | awk '{print} END{if(NR>0) {exit 1}}'
 	gofmt -s -l . 2>&1 | grep -vE 'vendor' | awk '{print} END{if(NR>0) {exit 1}}'
 	
-deps:
-	$(GO) list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
-		sort | uniq | grep -E '[^/]+\.[^/]+/' | \
-		awk 'BEGIN{print "#!/bin/bash"}{ printf("go get -u %s\n", $$1) }' > deps.sh
-	chmod +x deps.sh
+update_vendor:
+	which glide >/dev/null || curl https://glide.sh/get | sh
+	which glide-vc || go get -v -u github.com/sgotti/glide-vc
+ifdef PKG
+	glide get --strip-vendor --skip-test ${PKG}
+else
+	glide update --strip-vendor --skip-test
+endif
+	@echo "removing test files"
+	glide vc --only-code --no-tests
+

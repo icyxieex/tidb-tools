@@ -1,0 +1,24 @@
+package: github.com/pingcap/tidb-tools
+import:
+- package: github.com/BurntSushi/toml
+  version: ^0.2.0
+- package: github.com/go-sql-driver/mysql
+  version: ^1.2.0
+- package: github.com/juju/errors
+- package: github.com/ngaut/log
+- package: github.com/pingcap/tidb
+  version: 57552492638af05ada8fbccfe410ad3e685cc780
+  subpackages:
+  - ast
+  - mysql
+  - parser
+  - util/types
+- package: github.com/siddontang/go-mysql
+  version: 39dc0f2d69591d2e9e61ca4ad572dc121a9bcf86
+  subpackages:
+  - mysql
+  - replication
+- package: github.com/siddontang/go
+  subpackages:
+  - ioutil2
+  - sync2
