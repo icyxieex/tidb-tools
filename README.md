@@ -2,6 +2,14 @@
 
 tidb-tools are some useful tool collections for [TiDB](https://github.com/pingcap/tidb).
 
+
+## How to build
+
+```
+make deps && sh deps.sh (optional, install golang dependent packages)
+make build
+```
+
 [importer](./importer)
 
 [syncer](./syncer)

@@ -16,20 +16,24 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go-mysql/replication"
 	"github.com/siddontang/go/sync2"
 )
 
 var (
-	maxRetryCount = 2
+	maxRetryCount = 100
 
-	retryTimeout = time.Second
+	retryTimeout = 3 * time.Second
+	waitTime     = 10 * time.Millisecond
+	maxWaitTime  = 3 * time.Second
 	eventTimeout = 3 * time.Second
 	statusTime   = 30 * time.Second
 )
@@ -44,16 +48,16 @@ type Syncer struct {
 
 	syncer *replication.BinlogSyncer
 
-	wg sync.WaitGroup
+	wg    sync.WaitGroup
+	jobWg sync.WaitGroup
 
 	tables map[string]*table
 
 	fromDB *sql.DB
-	toDB   *sql.DB
+	toDBs  []*sql.DB
 
-	quit chan struct{}
 	done chan struct{}
-	jobs chan *job
+	jobs []chan *job
 
 	closed sync2.AtomicBool
 
@@ -66,6 +70,9 @@ type Syncer struct {
 	deleteCount sync2.AtomicInt64
 	lastCount   sync2.AtomicInt64
 	count       sync2.AtomicInt64
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewSyncer creates a new Syncer.
@@ -79,11 +86,26 @@ func NewSyncer(cfg *Config) *Syncer {
 	syncer.insertCount.Set(0)
 	syncer.updateCount.Set(0)
 	syncer.deleteCount.Set(0)
-	syncer.quit = make(chan struct{})
 	syncer.done = make(chan struct{})
-	syncer.jobs = make(chan *job, 100)
+	syncer.jobs = newJobChans(cfg.WorkerCount)
 	syncer.tables = make(map[string]*table)
+	syncer.ctx, syncer.cancel = context.WithCancel(context.Background())
 	return syncer
+}
+
+func newJobChans(count int) []chan *job {
+	jobs := make([]chan *job, 0, count)
+	for i := 0; i < count; i++ {
+		jobs = append(jobs, make(chan *job, 1000))
+	}
+
+	return jobs
+}
+
+func closeJobChans(jobs []chan *job) {
+	for _, ch := range jobs {
+		close(ch)
+	}
 }
 
 // Start starts syncer.
@@ -99,6 +121,8 @@ func (s *Syncer) Start() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	s.done <- struct{}{}
 
 	return nil
 }
@@ -138,6 +162,162 @@ func (s *Syncer) checkBinlogFormat() error {
 	return nil
 }
 
+func (s *Syncer) clearTables() {
+	s.tables = make(map[string]*table)
+}
+
+func (s *Syncer) getTableFromDB(db *sql.DB, schema string, name string) (*table, error) {
+	table := &table{}
+	table.schema = schema
+	table.name = name
+
+	err := s.getTableColumns(db, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = s.getTableIndex(db, table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(table.columns) == 0 {
+		return nil, errors.Errorf("invalid table %s.%s", schema, name)
+	}
+
+	return table, nil
+}
+
+func (s *Syncer) getTableColumns(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
+	}
+
+	query := fmt.Sprintf("show columns from %s.%s", table.schema, table.name)
+	rows, err := querySQL(db, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	rowColumns, err := rows.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Show an example.
+	/*
+	   mysql> show columns from test.t;
+	   +-------+---------+------+-----+---------+-------+
+	   | Field | Type    | Null | Key | Default | Extra |
+	   +-------+---------+------+-----+---------+-------+
+	   | a     | int(11) | NO   | PRI | NULL    |       |
+	   | b     | int(11) | NO   | PRI | NULL    |       |
+	   | c     | int(11) | YES  | MUL | NULL    |       |
+	   | d     | int(11) | YES  |     | NULL    |       |
+	   +-------+---------+------+-----+---------+-------+
+	*/
+
+	idx := 0
+	for rows.Next() {
+		datas := make([]sql.RawBytes, len(rowColumns))
+		values := make([]interface{}, len(rowColumns))
+
+		for i := range values {
+			values[i] = &datas[i]
+		}
+
+		err = rows.Scan(values...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		column := &column{}
+		column.idx = idx
+		column.name = string(datas[0])
+
+		// Check whether column has unsigned flag.
+		if strings.Contains(strings.ToLower(string(datas[1])), "unsigned") {
+			column.unsigned = true
+		}
+
+		table.columns = append(table.columns, column)
+		idx++
+	}
+
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
+	return nil
+}
+
+func (s *Syncer) getTableIndex(db *sql.DB, table *table) error {
+	if table.schema == "" || table.name == "" {
+		return errors.New("schema/table is empty")
+	}
+
+	query := fmt.Sprintf("show index from %s.%s", table.schema, table.name)
+	rows, err := querySQL(db, query)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rows.Close()
+
+	rowColumns, err := rows.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Show an example.
+	/*
+		mysql> show index from test.t;
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+		| Table | Non_unique | Key_name | Seq_in_index | Column_name | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+		| t     |          0 | PRIMARY  |            1 | a           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
+		| t     |          0 | PRIMARY  |            2 | b           | A         |           0 |     NULL | NULL   |      | BTREE      |         |               |
+		| t     |          0 | ucd      |            1 | c           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
+		| t     |          0 | ucd      |            2 | d           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
+		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+	*/
+	var keyName string
+	var columns []string
+	for rows.Next() {
+		datas := make([]sql.RawBytes, len(rowColumns))
+		values := make([]interface{}, len(rowColumns))
+
+		for i := range values {
+			values[i] = &datas[i]
+		}
+
+		err = rows.Scan(values...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		nonUnique := string(datas[1])
+		if nonUnique == "0" {
+			if keyName == "" {
+				keyName = string(datas[2])
+			} else {
+				if keyName != string(datas[2]) {
+					break
+				}
+			}
+
+			columns = append(columns, string(datas[4]))
+		}
+	}
+
+	if rows.Err() != nil {
+		return errors.Trace(rows.Err())
+	}
+
+	table.indexColumns = findColumns(table.columns, columns)
+	return nil
+}
+
 func (s *Syncer) getTable(schema string, table string) (*table, error) {
 	key := fmt.Sprintf("%s.%s", schema, table)
 
@@ -146,7 +326,8 @@ func (s *Syncer) getTable(schema string, table string) (*table, error) {
 		return value, nil
 	}
 
-	t, err := getTable(s.toDB, schema, table)
+	db := s.toDBs[len(s.toDBs)-1]
+	t, err := s.getTableFromDB(db, schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -170,71 +351,128 @@ func (s *Syncer) addCount(tp opType) {
 	s.count.Add(1)
 }
 
-func (s *Syncer) addJob(job *job) {
-	s.jobs <- job
+func (s *Syncer) checkWait(job *job) bool {
+	if job.tp == ddl {
+		return true
+	}
 
-	if job.done != nil {
-		<-job.done
+	if s.meta.Check() {
+		return true
+	}
+
+	return false
+}
+
+func (s *Syncer) addJob(job *job) error {
+	s.jobWg.Add(1)
+
+	idx := int(genHashKey(job.key)) % s.cfg.WorkerCount
+	s.jobs[idx] <- job
+
+	wait := s.checkWait(job)
+	if wait {
+		s.jobWg.Wait()
+
+		err := s.meta.Save(job.pos)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
+	defer s.wg.Done()
+
+	idx := 0
+	count := s.cfg.Batch
+	sqls := make([]string, 0, count)
+	args := make([][]interface{}, 0, count)
+	lastSyncTime := time.Now()
+
+	var err error
+	for {
+		select {
+		case job, ok := <-jobChan:
+			if !ok {
+				return
+			}
+
+			idx++
+			sqls = append(sqls, job.sql)
+			args = append(args, job.args)
+
+			if idx >= count || job.tp == ddl {
+				// For ddl sql, we will not use retry.
+				retry := job.tp != ddl
+				err = executeSQL(db, sqls, args, retry)
+				if err != nil {
+					log.Fatalf(errors.ErrorStack(err))
+				}
+
+				idx = 0
+				sqls = make([]string, 0, count)
+				args = make([][]interface{}, 0, count)
+				lastSyncTime = time.Now()
+			}
+
+			s.addCount(job.tp)
+			s.jobWg.Done()
+		default:
+			now := time.Now()
+			if now.Sub(lastSyncTime) >= maxWaitTime {
+				err = executeSQL(db, sqls, args, true)
+				if err != nil {
+					log.Fatalf(errors.ErrorStack(err))
+				}
+
+				idx = 0
+				sqls = make([]string, 0, count)
+				args = make([][]interface{}, 0, count)
+				lastSyncTime = now
+			}
+
+			time.Sleep(waitTime)
+		}
 	}
 }
 
-func (s *Syncer) sync() {
-	defer s.wg.Done()
+func (s *Syncer) skip(sql string) bool {
+	sql = strings.ToUpper(sql)
 
-	var (
-		sqls  []string
-		err   error
-		count int64
-	)
-	for job := range s.jobs {
-		tp := job.tp
-		switch tp {
-		case insert:
-			count++
-			sqls = append(sqls, job.sqls...)
-		default:
-			err = s.executeSQL(sqls)
-			if err != nil {
-				log.Fatalf(errors.ErrorStack(err))
-			}
-
-			sqls = job.sqls
-			count = 0
-		}
-
-		if count == s.cfg.Batch || count == 0 {
-			err = s.executeSQL(sqls)
-			if err != nil {
-				log.Fatalf(errors.ErrorStack(err))
-			}
-
-			count = 0
-			sqls = []string{}
-		}
-
-		s.addCount(tp)
-
-		if job.done != nil {
-			job.done <- struct{}{}
-		}
+	if strings.HasPrefix(sql, "GRANT REPLICATION SLAVE ON") {
+		return true
 	}
+
+	if strings.HasPrefix(sql, "FLUSH PRIVILEGES") {
+		return true
+	}
+
+	return false
 }
 
 func (s *Syncer) run() error {
 	defer s.wg.Done()
 
-	s.syncer = replication.NewBinlogSyncer(uint32(s.cfg.ServerID), "mysql")
-	err := s.syncer.RegisterSlave(s.cfg.From.Host, uint16(s.cfg.From.Port), s.cfg.From.User, s.cfg.From.Password)
-	if err != nil {
-		return errors.Trace(err)
+	cfg := replication.BinlogSyncerConfig{
+		ServerID: uint32(s.cfg.ServerID),
+		Flavor:   "mysql",
+		Host:     s.cfg.From.Host,
+		Port:     uint16(s.cfg.From.Port),
+		User:     s.cfg.From.User,
+		Password: s.cfg.From.Password,
 	}
 
+	s.syncer = replication.NewBinlogSyncer(&cfg)
+
+	var err error
 	s.fromDB, err = createDB(s.cfg.From)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	s.toDB, err = createDB(s.cfg.To)
+	s.toDBs, err = createDBs(s.cfg.To, s.cfg.WorkerCount+1)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -252,43 +490,42 @@ func (s *Syncer) run() error {
 	s.start = time.Now()
 	s.lastTime = s.start
 
-	s.wg.Add(2)
-	go s.sync()
+	s.wg.Add(s.cfg.WorkerCount)
+	for i := 0; i < s.cfg.WorkerCount; i++ {
+		go s.sync(s.toDBs[i], s.jobs[i])
+	}
+
+	s.wg.Add(1)
 	go s.printStatus()
 
-	forceSave := false
 	pos := s.meta.Pos()
 
 	for {
-		e, err := streamer.GetEventTimeout(eventTimeout)
-		if err != nil && !mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
-			return errors.Trace(err)
-		}
+		ctx, cancel := context.WithTimeout(s.ctx, eventTimeout)
+		e, err := streamer.GetEvent(ctx)
+		cancel()
 
-		select {
-		case <-s.quit:
-			log.Info("ready to quit!")
-
-			err = s.meta.Save(pos, true)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if err == context.Canceled {
+			log.Infof("ready to quit! [%v]", pos)
 			return nil
-		default:
-		}
-
-		if mysql.ErrorEqual(err, replication.ErrGetEventTimeout) {
+		} else if err == context.DeadlineExceeded {
 			continue
 		}
 
-		pos.Pos = e.Header.LogPos
-		forceSave = false
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		switch ev := e.Event.(type) {
 		case *replication.RotateEvent:
 			pos.Name = string(ev.NextLogName)
 			pos.Pos = uint32(ev.Position)
-			forceSave = true
+
+			err = s.meta.Save(pos)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			log.Infof("rotate binlog to %v", pos)
 		case *replication.RowsEvent:
 			table := &table{}
@@ -297,56 +534,88 @@ func (s *Syncer) run() error {
 				return errors.Trace(err)
 			}
 
-			var sqls []string
+			var (
+				sqls []string
+				keys []string
+				args [][]interface{}
+			)
 			switch e.Header.EventType {
 			case replication.WRITE_ROWS_EVENTv0, replication.WRITE_ROWS_EVENTv1, replication.WRITE_ROWS_EVENTv2:
-				sqls, err = genInsertSQLs(table.schema, table.name, ev.Rows, table.columns)
+				sqls, keys, args, err = genInsertSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen insert sqls failed: %v", err)
+					return errors.Errorf("gen insert sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
-				job := &job{tp: insert, sqls: sqls}
-				s.addJob(job)
+				for i := range sqls {
+					job := newJob(insert, sqls[i], args[i], keys[i], true, pos)
+					err = s.addJob(job)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
 			case replication.UPDATE_ROWS_EVENTv0, replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
-				sqls, err = genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, keys, args, err = genUpdateSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen update sqls failed: %v", err)
+					return errors.Errorf("gen update sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
-				job := &job{tp: update, sqls: sqls}
-				s.addJob(job)
+				for i := range sqls {
+					job := newJob(update, sqls[i], args[i], keys[i], true, pos)
+					err = s.addJob(job)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
 			case replication.DELETE_ROWS_EVENTv0, replication.DELETE_ROWS_EVENTv1, replication.DELETE_ROWS_EVENTv2:
-				sqls, err = genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
+				sqls, keys, args, err = genDeleteSQLs(table.schema, table.name, ev.Rows, table.columns, table.indexColumns)
 				if err != nil {
-					return errors.Errorf("gen delete sqls failed: %v", err)
+					return errors.Errorf("gen delete sqls failed: %v, schema: %s, table: %s", err, table.schema, table.name)
 				}
 
-				job := &job{tp: del, sqls: sqls}
-				s.addJob(job)
+				for i := range sqls {
+					job := newJob(del, sqls[i], args[i], keys[i], true, pos)
+					err = s.addJob(job)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
 			}
 		case *replication.QueryEvent:
 			ok := false
 			sql := string(ev.Query)
+			if s.skip(sql) {
+				log.Warnf("[skip sql]%s", sql)
+				continue
+			}
+
+			log.Debugf("[query]%s", sql)
+
 			ok, err = isDDLSQL(sql)
 			if err != nil {
 				return errors.Errorf("parse query event failed: %v", err)
 			}
 			if ok {
+				pos.Pos = e.Header.LogPos
+
 				sql, err = genDDLSQL(sql, string(ev.Schema))
 				if err != nil {
 					return errors.Trace(err)
 				}
 
-				job := &job{tp: ddl, sqls: []string{sql}, done: s.done}
-				s.addJob(job)
+				log.Infof("[ddl][start]%s[next pos]%v", sql, pos)
 
-				forceSave = true
+				job := newJob(ddl, sql, nil, "", false, pos)
+				err = s.addJob(job)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				log.Infof("[ddl][end]%s[next pos]%v", sql, pos)
+
+				s.clearTables()
 			}
-		}
-
-		err = s.meta.Save(pos, forceSave)
-		if err != nil {
-			return errors.Trace(err)
+		case *replication.XIDEvent:
+			pos.Pos = e.Header.LogPos
 		}
 	}
 }
@@ -359,7 +628,7 @@ func (s *Syncer) printStatus() {
 
 	for {
 		select {
-		case <-s.quit:
+		case <-s.ctx.Done():
 			return
 		case <-timer.C:
 			now := time.Now()
@@ -374,68 +643,13 @@ func (s *Syncer) printStatus() {
 				totalTps = total / totalSeconds
 			}
 
-			log.Infof("[syncer]total events = %d , insert = %d, update = %d, delete = %d, total tps = %d, recent tps = %d, %s.",
+			log.Infof("[syncer]total events = %d, insert = %d, update = %d, delete = %d, total tps = %d, recent tps = %d, %s.",
 				total, s.insertCount.Get(), s.updateCount.Get(), s.deleteCount.Get(), totalTps, tps, s.meta)
 
 			s.lastCount.Set(total)
 			s.lastTime = time.Now()
 		}
 	}
-}
-
-func (s *Syncer) executeSQL(sqls []string) error {
-	if len(sqls) == 0 {
-		return nil
-	}
-
-	var (
-		err error
-		txn *sql.Tx
-	)
-
-LOOP:
-	for i := 0; i < maxRetryCount; i++ {
-		if s.toDB == nil {
-			log.Debugf("execute sql retry %d - %v", i, sqls)
-			time.Sleep(retryTimeout)
-
-			s.toDB, err = createDB(s.cfg.To)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		txn, err = s.toDB.Begin()
-		if err != nil {
-			s.toDB = nil
-			continue
-		}
-
-		for _, sql := range sqls {
-			log.Debug(sql)
-
-			_, err = s.toDB.Exec(sql)
-			if err != nil {
-				s.toDB = nil
-				continue LOOP
-			}
-		}
-
-		err = txn.Commit()
-		if err != nil {
-			s.toDB = nil
-			continue
-		}
-
-		return nil
-	}
-
-	if err != nil {
-		log.Errorf("execute sqls[%v] failed %v", sqls, errors.ErrorStack(err))
-		return errors.Trace(err)
-	}
-
-	return nil
 }
 
 func (s *Syncer) isClosed() bool {
@@ -451,19 +665,16 @@ func (s *Syncer) Close() {
 		return
 	}
 
-	close(s.quit)
+	s.cancel()
+
+	<-s.done
+
+	closeJobChans(s.jobs)
 
 	s.wg.Wait()
 
-	err := closeDB(s.fromDB)
-	if err != nil {
-		log.Error(err)
-	}
-
-	err = closeDB(s.toDB)
-	if err != nil {
-		log.Error(err)
-	}
+	closeDBs(s.fromDB)
+	closeDBs(s.toDBs...)
 
 	if s.syncer != nil {
 		s.syncer.Close()

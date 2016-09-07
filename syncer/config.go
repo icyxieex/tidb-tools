@@ -29,9 +29,13 @@ func NewConfig() *Config {
 
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
 	fs.IntVar(&cfg.ServerID, "server-id", 101, "MySQL slave server ID")
-	fs.Int64Var(&cfg.Batch, "b", 1, "batch commit count")
+	fs.IntVar(&cfg.WorkerCount, "c", 1, "parallel worker count")
+	fs.IntVar(&cfg.Batch, "b", 1, "batch commit count")
+	fs.StringVar(&cfg.PprofAddr, "pprof-addr", ":10081", "pprof addr")
 	fs.StringVar(&cfg.Meta, "meta", "syncer.meta", "syncer meta info")
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
+	fs.StringVar(&cfg.LogFile, "log-file", "", "log file path")
+	fs.StringVar(&cfg.LogRotate, "log-rotate", "", "log file rotate type, hour/day")
 
 	return cfg
 }
@@ -60,9 +64,17 @@ type Config struct {
 
 	LogLevel string `toml:"log-level" json:"log-level"`
 
+	LogFile string `toml:"log-file" json:"log-file"`
+
+	LogRotate string `toml:"log-rotate" json:"log-rotate"`
+
+	PprofAddr string `toml:"pprof-addr" json:"pprof-addr"`
+
 	ServerID int `toml:"server-id" json:"server-id"`
 
-	Batch int64 `toml:"batch" json:"batch"`
+	WorkerCount int `toml:"worker-count" json:"worker-count"`
+
+	Batch int `toml:"batch" json:"batch"`
 
 	Meta string `toml:"meta" json:"meta"`
 
