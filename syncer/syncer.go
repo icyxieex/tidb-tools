@@ -408,10 +408,12 @@ func (s *Syncer) sync(db *sql.DB, jobChan chan *job) {
 				}
 
 				err = executeSQL(db, []string{job.sql}, [][]interface{}{job.args}, false)
-				if !ignoreDDLError(err) {
-					log.Fatalf(errors.ErrorStack(err))
-				} else {
-					log.Warnf("[ignore ddl error][sql]%s[args]%v[error]%v", job.sql, job.args, err)
+				if err != nil {
+					if !ignoreDDLError(err) {
+						log.Fatalf(errors.ErrorStack(err))
+					} else {
+						log.Warnf("[ignore ddl error][sql]%s[args]%v[error]%v", job.sql, job.args, err)
+					}
 				}
 
 				idx = 0

@@ -344,10 +344,6 @@ func genDeleteSQLs(schema string, table string, datas [][]interface{}, columns [
 }
 
 func ignoreDDLError(err error) bool {
-	if err == nil {
-		return true
-	}
-
 	mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError)
 	if !ok {
 		return false
