@@ -469,6 +469,10 @@ func (s *Syncer) skip(sql string) bool {
 		return true
 	}
 
+	if strings.Contains(sql, "MODIFY COLUMN") {
+		return true
+	}
+
 	return false
 }
 
